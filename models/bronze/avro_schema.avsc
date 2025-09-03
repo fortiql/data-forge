@@ -1,0 +1,9 @@
+{
+  "type": "record",
+  "name": "RecentChange",
+  "fields": [
+    {"name": "id", "type": "string"},
+    {"name": "user", "type": "string"},
+    {"name": "timestamp", "type": "long"}
+  ]
+}
