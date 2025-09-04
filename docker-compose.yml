@@ -3,21 +3,21 @@ x-airflow-common: &airflow-common
     context: ./infra/airflow
   environment:
     &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://admin:admin@postgres/metastore
-    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://admin:admin@postgres/metastore
-    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-    AIRFLOW__CORE__FERNET_KEY: ''
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
-    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__CORE__EXECUTOR: ${AIRFLOW_EXECUTOR}
+    AIRFLOW__CORE__AUTH_MANAGER: ${AIRFLOW_AUTH_MANAGER}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DATABASE_SQL_ALCHEMY_CONN}
+    AIRFLOW__CELERY__RESULT_BACKEND: ${AIRFLOW_CELERY_RESULT_BACKEND}
+    AIRFLOW__CELERY__BROKER_URL: ${AIRFLOW_CELERY_BROKER_URL}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_ARE_PAUSED_AT_CREATION}
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: ${AIRFLOW_EXECUTION_API_SERVER_URL}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: ${AIRFLOW_SCHEDULER_ENABLE_HEALTH_CHECK}
   volumes:
     - ./infra/airflow/dags:/opt/airflow/dags
     - ./infra/airflow/logs:/opt/airflow/logs
     - ./infra/airflow/plugins:/opt/airflow/plugins
-  user: "50000:0"
+  user: "${AIRFLOW_UID}:0"
   depends_on:
     redis:
       condition: service_started
@@ -48,11 +48,11 @@ services:
     build:
       context: ./infra/hive-metastore
     environment:
-      - HIVE_METASTORE_DB_TYPE=postgres
-      - HIVE_METASTORE_DB_HOST=postgres
-      - HIVE_METASTORE_DB_NAME=metastore
-      - HIVE_METASTORE_DB_USER=admin
-      - HIVE_METASTORE_DB_PASS=admin
+      - HIVE_METASTORE_DB_TYPE=${HIVE_METASTORE_DB_TYPE}
+      - HIVE_METASTORE_DB_HOST=${HIVE_METASTORE_DB_HOST}
+      - HIVE_METASTORE_DB_NAME=${HIVE_METASTORE_DB_NAME}
+      - HIVE_METASTORE_DB_USER=${HIVE_METASTORE_DB_USER}
+      - HIVE_METASTORE_DB_PASS=${HIVE_METASTORE_DB_PASS}
     depends_on:
       - postgres
     ports:
@@ -77,6 +77,7 @@ services:
     depends_on:
       - hive-metastore
       - minio
+      - clickhouse
     profiles: [core]
 
 
@@ -91,7 +92,6 @@ services:
       - "5432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
       interval: 10s
@@ -103,11 +103,11 @@ services:
     build:
       context: ./infra/debezium
     environment:
-      - BOOTSTRAP_SERVERS=kafka:9092
-      - GROUP_ID=1
-      - CONFIG_STORAGE_TOPIC=my_connect_configs
-      - OFFSET_STORAGE_TOPIC=my_connect_offsets
-      - STATUS_STORAGE_TOPIC=my_connect_statuses
+      - BOOTSTRAP_SERVERS=${DEBEZIUM_BOOTSTRAP_SERVERS}
+      - GROUP_ID=${DEBEZIUM_GROUP_ID}
+      - CONFIG_STORAGE_TOPIC=${DEBEZIUM_CONFIG_STORAGE_TOPIC}
+      - OFFSET_STORAGE_TOPIC=${DEBEZIUM_OFFSET_STORAGE_TOPIC}
+      - STATUS_STORAGE_TOPIC=${DEBEZIUM_STATUS_STORAGE_TOPIC}
     depends_on:
       - kafka
       - postgres
@@ -119,13 +119,13 @@ services:
     build:
       context: ./infra/kafka
     environment:
-      KAFKA_CFG_NODE_ID: 0
-      KAFKA_CFG_PROCESS_ROLES: broker,controller
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_CFG_NODE_ID: ${KAFKA_NODE_ID}
+      KAFKA_CFG_PROCESS_ROLES: ${KAFKA_PROCESS_ROLES}
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS}
+      KAFKA_CFG_LISTENERS: ${KAFKA_LISTENERS}
+      KAFKA_CFG_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: ${KAFKA_CONTROLLER_LISTENER_NAMES}
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE}
     ports:
       - "9092:9092"
     volumes:
@@ -150,9 +150,9 @@ services:
     build:
       context: ./infra/schema-registry
     environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: ${SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS}
+      SCHEMA_REGISTRY_HOST_NAME: ${SCHEMA_REGISTRY_HOST_NAME}
+      SCHEMA_REGISTRY_LISTENERS: ${SCHEMA_REGISTRY_LISTENERS}
     depends_on:
       - kafka
     ports:
@@ -163,9 +163,9 @@ services:
     build:
       context: ./infra/kafka-ui
     environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_SCHEMA_REGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_NAME: ${KAFKA_UI_CLUSTERS_0_NAME}
+      KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: ${KAFKA_UI_CLUSTERS_0_BOOTSTRAP_SERVERS}
+      KAFKA_CLUSTERS_0_SCHEMA_REGISTRY: ${KAFKA_UI_CLUSTERS_0_SCHEMA_REGISTRY}
     depends_on:
       - kafka
       - schema-registry
@@ -177,7 +177,7 @@ services:
     build:
       context: ./infra/spark
     environment:
-      - SPARK_MODE=master
+      - SPARK_MODE=${SPARK_MASTER_MODE}
     ports:
       - "7077:7077"
       - "8088:8080"
@@ -210,8 +210,8 @@ services:
     build:
       context: ./infra/spark
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_MODE=${SPARK_WORKER_MODE}
+      - SPARK_MASTER_URL=${SPARK_MASTER_URL}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -235,8 +235,8 @@ services:
     build:
       context: ./infra/spark
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_MODE=${SPARK_WORKER_MODE}
+      - SPARK_MASTER_URL=${SPARK_MASTER_URL}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -268,6 +268,28 @@ services:
       retries: 50
       start_period: 30s
     profiles: [core,airflow]
+
+  clickhouse:
+    build:
+      context: ./infra/clickhouse
+    ports:
+      - "8123:8123"
+      - "9002:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.xml:/etc/clickhouse-server/config.xml
+      - ./infra/clickhouse/users.xml:/etc/clickhouse-server/users.xml
+    environment:
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    profiles: [core]
 
 
 
@@ -400,13 +422,9 @@ services:
         mkdir -p /opt/airflow/{logs,dags,plugins}
         chown -R "${AIRFLOW_UID}:0" /opt/airflow/
         airflow db migrate
-        airflow users create --username airflow --password airflow --firstname Airflow --lastname Admin --role Admin --email airflow@airflow.com
+        airflow users create --username ${AIRFLOW_ADMIN_USERNAME} --password ${AIRFLOW_ADMIN_PASSWORD} --firstname ${AIRFLOW_ADMIN_FIRSTNAME} --lastname ${AIRFLOW_ADMIN_LASTNAME} --role Admin --email ${AIRFLOW_ADMIN_EMAIL}
     environment:
       <<: *airflow-common-env
-      _AIRFLOW_DB_MIGRATE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: airflow
-      _AIRFLOW_WWW_USER_PASSWORD: airflow
     user: "0:0"
     depends_on:
       redis:
@@ -419,12 +437,12 @@ services:
     build:
       context: ./infra/superset
     environment:
-      - SUPERSET_SECRET_KEY=your_superset_key
-      - SUPERSET_ADMIN_USERNAME=admin
-      - SUPERSET_ADMIN_PASSWORD=admin
-      - SUPERSET_ADMIN_FIRSTNAME=Admin
-      - SUPERSET_ADMIN_LASTNAME=User
-      - SUPERSET_ADMIN_EMAIL=admin@superset.com
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
+      - SUPERSET_ADMIN_USERNAME=${SUPERSET_ADMIN_USERNAME}
+      - SUPERSET_ADMIN_PASSWORD=${SUPERSET_ADMIN_PASSWORD}
+      - SUPERSET_ADMIN_FIRSTNAME=${SUPERSET_ADMIN_FIRSTNAME}
+      - SUPERSET_ADMIN_LASTNAME=${SUPERSET_ADMIN_LASTNAME}
+      - SUPERSET_ADMIN_EMAIL=${SUPERSET_ADMIN_EMAIL}
     entrypoint: ["/app/pythonpath/create_admin.sh"]
     ports:
       - "8089:8088"
@@ -445,8 +463,27 @@ services:
       - ./notebooks:/home/jovyan/work
       - ./processing/spark/jobs:/home/jovyan/spark-jobs
     environment:
-
-      - JUPYTER_ENABLE_LAB=yes
+      # Jupyter Configuration
+      - JUPYTER_ENABLE_LAB=${JUPYTER_ENABLE_LAB}
+      # Database Connections
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB}
+      # Object Storage
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      # Kafka
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      # Spark
+      - SPARK_MASTER_URL=${SPARK_MASTER_URL}
+      # Service URLs
+      - TRINO_URL=http://trino:8080
+      - SUPERSET_URL=http://superset:8088
+      - AIRFLOW_URL=http://airflow-apiserver:8080
     profiles: [explore]
 
 volumes:
@@ -454,3 +491,4 @@ volumes:
   pg-data:
   kafka-data:
   trino-data:
+  clickhouse-data:

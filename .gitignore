@@ -1,19 +1,9 @@
-# Python
 __pycache__/
 *.pyc
-
-# Jupyter
 .ipynb_checkpoints/
-
-# Airflow
+.jupyter_ystore.db
 infra/airflow/airflow_home/
-
-# Spark
 *.log
-
-# VSCode
 .vscode/
-
-# Docker
 .env
 .env.*

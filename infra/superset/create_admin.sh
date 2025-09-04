@@ -1,10 +1,6 @@
 #!/bin/bash
 set -e
-
-# Install packages compatible with SQLAlchemy v1.4.54 (used by Superset)
 pip install --user "trino<0.320" "sqlalchemy-trino<0.5.0"
-
-# Ensure the user-installed packages are in the Python path
 export PYTHONPATH="/app/superset_home/.local/lib/python3.10/site-packages:$PYTHONPATH"
 
 superset db upgrade

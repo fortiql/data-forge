@@ -1,3 +1,1 @@
-# Example Spark Dockerfile
-FROM bitnami/spark:latest
-# Add customizations here if needed
+FROM bitnami/spark:3.5.0
