@@ -2,8 +2,7 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .jupyter_ystore.db
-infra/airflow/airflow_home/
+infra/airflow/logs/
 *.log
 .vscode/
 .env
-.env.*
