@@ -92,7 +92,7 @@ docker compose --profile explore up -d
 |---------|-----|---------------|
 | **Airflow** | http://localhost:8080 | \`admin\` / \`admin\` |
 | **Superset** | http://localhost:8088 | \`admin\` / \`admin\` |
-| **JupyterLab** | http://localhost:8888 | Token in logs |
+| **JupyterLab** | http://localhost:8888 | No auth |
 | **MinIO Console** | http://localhost:9001 | \`minio\` / \`minio123\` |
 | **Trino** | http://localhost:8081 | No auth |
 
@@ -159,10 +159,10 @@ data-forge/
 
 ### Adding New Services
 
-1. Create service directory in \`infra/\`
+1. Create service directory in `infra`
 2. Add Dockerfile and configuration
-3. Update \`docker-compose.yml\` with service definition
-4. Add to appropriate profile (\`core\`, \`airflow\`, \`explore\`)
+3. Update `docker-compose.yml` with service definition
+4. Add to appropriate profile (`core`, `airflow`, `explore`)
 5. Update documentation
 
 ### Environment Variables
@@ -207,9 +207,9 @@ We welcome contributions! Here's how to get started:
 
 ### 🛠️ Code Contributions
 1. **Fork** the repository
-2. **Create** feature branch: \`git checkout -b feature/amazing-feature\`
+2. **Create** feature branch: `git checkout -b feature/amazing-feature`
 3. **Follow** our [documentation guidelines](docs/guidelines.md)
-4. **Test** your changes with \`docker compose up\`
+4. **Test** your changes with `docker compose up`
 5. **Submit** pull request with clear description
 
 ### 📖 Documentation
