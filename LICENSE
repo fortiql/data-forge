@@ -1,0 +1,98 @@
+MIT License
+
+Copyright (c) 2025 Data Forge Project
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+
+THIRD-PARTY SOFTWARE LICENSES
+
+This project incorporates multiple open-source components, each governed by
+their respective licenses:
+
+Apache License 2.0:
+- Apache Airflow (https://github.com/apache/airflow)
+- Apache Spark (https://github.com/apache/spark)
+- Apache Kafka (https://github.com/apache/kafka)
+- Trino (https://github.com/trinodb/trino)
+- ClickHouse (https://github.com/ClickHouse/ClickHouse)
+- Apache Superset (https://github.com/apache/superset)
+- Confluent Schema Registry (https://github.com/confluentinc/schema-registry)
+- Debezium (https://github.com/debezium/debezium)
+
+PostgreSQL License:
+- PostgreSQL (https://github.com/postgres/postgres)
+
+GNU AGPL v3.0 (Server) / Apache 2.0 (Client Libraries):
+- MinIO (https://github.com/minio/minio)
+
+BSD 3-Clause License:
+- JupyterLab (https://github.com/jupyterlab/jupyterlab)
+- Pandas (https://github.com/pandas-dev/pandas)
+- NumPy (https://github.com/numpy/numpy)
+
+Redis Source Available License 2.0 (RSALv2):
+- Redis (https://github.com/redis/redis)
+
+MIT License:
+- Docker Compose configurations (original work)
+- Custom scripts and documentation (original work)
+- Integration and orchestration code (original work)
+
+For complete license texts and attributions, please refer to the respective
+project repositories and documentation.
+
+Docker Images:
+This project uses official Docker images from Docker Hub and other registries.
+These images are subject to their respective licenses and terms of service.
+
+================================================================================
+
+ATTRIBUTION REQUIREMENTS
+
+When redistributing or modifying this software, you must:
+
+1. Include this license file
+2. Preserve all copyright notices
+3. Include attribution to original authors
+4. Respect the license terms of all included components
+5. Provide notice of any modifications made
+
+For commercial use or redistribution, ensure compliance with all component
+licenses, particularly:
+- MinIO AGPL requirements for server-side modifications
+- Redis RSALv2 requirements for hosted services
+- Apache License attribution requirements
+
+================================================================================
+
+DISCLAIMER
+
+The Data Forge project is provided for educational and development purposes.
+Production deployments should:
+
+- Review and comply with all applicable licenses
+- Implement proper security measures
+- Use supported versions of all components
+- Consider commercial licenses where appropriate
+- Consult legal counsel for compliance guidance
+
+This software is not affiliated with or endorsed by any of the incorporated
+third-party projects or their respective organizations.

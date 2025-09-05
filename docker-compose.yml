@@ -80,7 +80,6 @@ services:
       - clickhouse
     profiles: [core]
 
-
   postgres:
     build:
       context: ./infra/postgres
@@ -449,7 +448,6 @@ services:
     volumes:
       - ./infra/superset/provisioning:/app/provisioning
       - ./infra/superset/create_admin.sh:/app/pythonpath/create_admin.sh
-      - ./docker:/app/docker
     depends_on:
       - trino
     profiles: [core]
@@ -463,24 +461,18 @@ services:
       - ./notebooks:/home/jovyan/work
       - ./processing/spark/jobs:/home/jovyan/spark-jobs
     environment:
-      # Jupyter Configuration
       - JUPYTER_ENABLE_LAB=${JUPYTER_ENABLE_LAB}
-      # Database Connections
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
       - CLICKHOUSE_USER=${CLICKHOUSE_USER}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB}
-      # Object Storage
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      # Kafka
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - SCHEMA_REGISTRY_URL=http://schema-registry:8081
-      # Spark
       - SPARK_MASTER_URL=${SPARK_MASTER_URL}
-      # Service URLs
       - TRINO_URL=http://trino:8080
       - SUPERSET_URL=http://superset:8088
       - AIRFLOW_URL=http://airflow-apiserver:8080
