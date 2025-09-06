@@ -28,10 +28,10 @@ Data Quality:
 - Bad records sprinkled for robust data pipeline testing
 """
 
-import os, time, random, string, signal, sys, json, math
+import os, random, string, signal, math
 from time import monotonic, sleep
-from datetime import datetime, timezone, timedelta
-from collections import deque, defaultdict
+from datetime import datetime, timezone
+from collections import deque
 
 import psycopg2
 from psycopg2.extras import execute_batch
@@ -46,9 +46,6 @@ try:
 except Exception:
     AvroSerializer = None
 
-# -----------------------
-# Config via environment
-# -----------------------
 BOOTSTRAP       = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 SCHEMA_REGISTRY = os.getenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 TOPIC_ORDERS    = os.getenv("TOPIC_ORDERS", "orders.v1")
@@ -231,14 +228,11 @@ def seed_postgres(conn):
         products.append((product_id, f"Product {i+1}", category, price))
         if i >= int(SEED_PRODUCTS * 0.1):
             try:
-                RECENT_PRODUCTS.append(product_id)  # noqa: F821
+                RECENT_PRODUCTS.append(product_id)
             except NameError:
                 pass
 
-    # --- Legacy/global inventory snapshot ---
     inv_global = [(pid, random.randint(0, 1000)) for pid, _, _, _ in products]
-
-    # --- Customer segments ---
     seg_weights = [0.05, 0.70, 0.20, 0.05]
     seg_rows = []
     for uid, _, _ in users:
@@ -251,7 +245,6 @@ def seed_postgres(conn):
         }[segment]
         seg_rows.append((uid, segment, round(ltv, 2)))
 
-    # --- Product ↔ Supplier relations ---
     prod_supp = []
     for pid, _, _, price in products:
         num_suppliers = random.randint(1, 3)
@@ -261,7 +254,6 @@ def seed_postgres(conn):
             lead_time = random.randint(3, 21)
             prod_supp.append((pid, sid, cost, lead_time))
 
-    # --- Warehouse inventory (only WH### IDs from `warehouses`) ---
     inv_by_wh = []
     for wid, _, _, _ in warehouses:
         for pid, _, _, _ in products:
@@ -270,12 +262,10 @@ def seed_postgres(conn):
                 reserved = random.randint(0, min(qty, 50))
                 inv_by_wh.append((wid, pid, qty, reserved))
 
-    # --- Single transaction for speed & FK safety ---
     prev_autocommit = getattr(conn, "autocommit", False)
     conn.autocommit = False
     try:
         with conn.cursor() as cur:
-            # Parents first
             execute_batch(cur,
                 "INSERT INTO warehouses(warehouse_id,name,country,region) "
                 "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
@@ -292,8 +282,6 @@ def seed_postgres(conn):
                 "INSERT INTO products(product_id,title,category,price_usd) "
                 "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                 products)
-
-            # Then dependents
             execute_batch(cur,
                 "INSERT INTO inventory(product_id,qty) "
                 "VALUES (%s,%s) "
@@ -383,14 +371,13 @@ def send(producer, topic, key, value, serializer, headers=None):
             )
             break
         except BufferError:
-            producer.poll(0.05)  # drain queue on backpressure
+            producer.poll(0.05)
 
 # -----------------------
 # Generators
 # -----------------------
 
 def get_or_create_session(user_id):
-    # 40% chance of new session to keep spread
     if random.random() < 0.4 or not RECENT_SESSIONS:
         sid = rid("sess", 12)
         RECENT_SESSIONS.append((user_id, sid))
@@ -730,8 +717,6 @@ def clear_kafka():
         TOPIC_CUSTOMER_INTERACTIONS,
     ]
     admin = AdminClient({"bootstrap.servers": BOOTSTRAP})
-
-    # delete topics
     print("🧹 Deleting Kafka topics...")
     futures = admin.delete_topics(topics, operation_timeout=10)
     for t, f in futures.items():
@@ -740,8 +725,6 @@ def clear_kafka():
             print(f"  ✨ Deleted topic {t}")
         except Exception as e:
             print(f"  ⚠️ Delete failed for {t}: {e}")
-
-    # recreate them (so producers won’t block later)
     print("📝 Re-creating topics...")
     new_topics = [NewTopic(t, num_partitions=3, replication_factor=1) for t in topics]
     futures = admin.create_topics(new_topics)
