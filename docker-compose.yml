@@ -92,7 +92,7 @@ services:
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -157,6 +157,50 @@ services:
     ports:
       - "8081:8081"
     profiles: [core]
+
+  data-generator:
+    build:
+      context: ./infra/data-generator
+    environment:
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
+      SCHEMA_REGISTRY_URL: ${SCHEMA_REGISTRY_URL:-http://schema-registry:8081}
+      PG_DSN: ${PG_DSN:-host=postgres port=5432 dbname=demo user=admin password=admin}
+      RATE_MPS: ${DATA_GEN_RATE_MPS:-40}
+      SEED_USERS: ${DATA_GEN_SEED_USERS:-500}
+      SEED_PRODUCTS: ${DATA_GEN_SEED_PRODUCTS:-200}
+      SEED_WAREHOUSES: ${DATA_GEN_SEED_WAREHOUSES:-5}
+      SEED_SUPPLIERS: ${DATA_GEN_SEED_SUPPLIERS:-20}
+      P_CUSTOMER_INTERACTION: ${DATA_GEN_P_CUSTOMER_INTERACTION:-0.8}
+      P_INVENTORY_EVENT: ${DATA_GEN_P_INVENTORY_EVENT:-0.3}
+      TOPIC_ORDERS: ${DATA_GEN_TOPIC_ORDERS:-orders.v1}
+      TOPIC_PAYMENTS: ${DATA_GEN_TOPIC_PAYMENTS:-payments.v1}
+      TOPIC_SHIPMENTS: ${DATA_GEN_TOPIC_SHIPMENTS:-shipments.v1}
+      TOPIC_INVENTORY_CHANGES: ${DATA_GEN_TOPIC_INVENTORY_CHANGES:-inventory-changes.v1}
+      TOPIC_CUSTOMER_INTERACTIONS: ${DATA_GEN_TOPIC_CUSTOMER_INTERACTIONS:-customer-interactions.v1}
+    #depends_on:
+    #  postgres:
+    #    condition: service_healthy
+    #  kafka:
+    #    condition: service_healthy
+    #  schema-registry:
+    #    condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import psycopg2, os; from confluent_kafka.schema_registry import SchemaRegistryClient; pg_dsn = os.getenv('PG_DSN', 'host=postgres port=5432 dbname=demo user=admin password=admin'); sr_url = os.getenv('SCHEMA_REGISTRY_URL', 'http://schema-registry:8081'); conn = psycopg2.connect(pg_dsn); conn.close(); sr = SchemaRegistryClient({'url': sr_url}); sr.get_subjects(); print('Dependencies healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    profiles: [datagen]
+
 
   kafka-ui:
     build:

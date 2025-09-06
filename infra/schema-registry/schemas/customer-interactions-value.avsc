@@ -1,0 +1,19 @@
+{
+  "type": "record",
+  "name": "CustomerInteraction",
+  "namespace": "demo",
+  "fields": [
+    {"name": "interaction_id", "type": "string"},
+    {"name": "user_id", "type": "string"},
+    {"name": "session_id", "type": "string"},
+    {"name": "interaction_type", "type": {"type": "enum", "name": "InteractionType", "symbols": ["PAGE_VIEW", "SEARCH", "CART_ADD", "CART_REMOVE", "WISHLIST_ADD", "REVIEW", "SUPPORT_CHAT"]}},
+    {"name": "product_id", "type": ["null", "string"], "default": null},
+    {"name": "search_query", "type": ["null", "string"], "default": null},
+    {"name": "page_url", "type": ["null", "string"], "default": null},
+    {"name": "duration_ms", "type": ["null", "long"], "default": null},
+    {"name": "user_agent", "type": "string"},
+    {"name": "ip_address", "type": "string"},
+    {"name": "country", "type": "string"},
+    {"name": "ts", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

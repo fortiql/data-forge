@@ -1,0 +1,26 @@
+{
+  "type": "record",
+  "name": "Payment",
+  "namespace": "demo",
+  "fields": [
+    {"name": "payment_id", "type": "string"},
+    {"name": "order_id", "type": "string"},
+    {
+      "name": "method", 
+      "type": {
+        "type": "enum",
+        "name": "Method",
+        "symbols": ["CARD", "APPLE_PAY", "PAYPAL"]
+      }
+    },
+    {
+      "name": "status", 
+      "type": {
+        "type": "enum",
+        "name": "Status",
+        "symbols": ["PENDING", "SETTLED", "FAILED", "UNKNOWN"]
+      }
+    },
+    {"name": "ts", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

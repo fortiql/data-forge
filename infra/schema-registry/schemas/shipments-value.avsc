@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "Shipment",
+  "namespace": "demo",
+  "fields": [
+    {"name": "shipment_id", "type": "string"},
+    {"name": "order_id", "type": "string"},
+    {"name": "carrier", "type": "string"},
+    {"name": "eta_days", "type": "int", "default": 3},
+    {"name": "ts", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}
