@@ -39,6 +39,7 @@ from psycopg2.extras import execute_batch
 from confluent_kafka import SerializingProducer
 from confluent_kafka.serialization import StringSerializer, SerializationContext, MessageField
 from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.admin import AdminClient, NewTopic
 
 try:
     from confluent_kafka.schema_registry.avro import AvroSerializer
@@ -105,7 +106,7 @@ RECENT_PRODUCTS   = deque(maxlen=1000)
 RECENT_ORDERS     = deque(maxlen=3000)
 RECENT_WAREHOUSES = deque(maxlen=50)
 RECENT_SUPPLIERS  = deque(maxlen=100)
-RECENT_SESSIONS   = deque(maxlen=200)   # smaller to force rotation
+RECENT_SESSIONS   = deque(maxlen=200)
 
 # -----------------------
 # Utilities
@@ -183,81 +184,143 @@ def pg_connect():
 
 
 def seed_postgres(conn):
-    """Create+seed reference data; avoids ORDER BY random() hot paths by preloading caches."""
-    with open("ddl.sql", "r", encoding="utf-8") as f:
-        with conn.cursor() as cur:
-            cur.execute(f.read())
-
+    """
+    Seed Postgres with reference data for analytics.
+    Creates realistic e-commerce foundation: users, products, warehouses, suppliers.
+    Uses a single transaction + ON CONFLICT for idempotency.
+    """
+    print("🌱 Seeding Postgres reference data...")
     warehouses = []
     for i in range(SEED_WAREHOUSES):
         country = random.choice(COUNTRIES)
-        wid = rid("wh", 6)
-        name = f"Warehouse {chr(65+i)} - {country}"
-        region = "EMEA" if country in ["DE","GB","FR","ES","IT","NL"] else ("Americas" if country == "US" else "APAC")
-        warehouses.append((wid, name, country, region))
-        RECENT_WAREHOUSES.append(wid)
+        region = "North America" if country in {"US", "CA"} else "Europe"
+        warehouse_id = f"WH{i+1:03d}"
+        warehouses.append((warehouse_id, f"Warehouse {i+1}", country, region))
+        try:
+            RECENT_WAREHOUSES.append(warehouse_id)
+        except NameError:
+            pass
 
     suppliers = []
-    for _ in range(SEED_SUPPLIERS):
-        sid = rid("sup", 6)
-        name = f"Supplier {rid('', 4).upper()}"
+    for i in range(SEED_SUPPLIERS):
         country = random.choice(COUNTRIES)
-        rating = round(random.uniform(3.0, 5.0), 2)
-        suppliers.append((sid, name, country, rating))
-        RECENT_SUPPLIERS.append(sid)
+        rating = round(random.uniform(3.0, 5.0), 1)
+        supplier_id = f"SUP{i+1:03d}"
+        suppliers.append((supplier_id, f"Supplier {i+1}", country, rating))
+        try:
+            RECENT_SUPPLIERS.append(supplier_id)
+        except NameError:
+            pass
 
     users = []
-    seg_rows = []
-    for _ in range(SEED_USERS):
-        uid = rid("u", 8)
-        email = f"{uid}@example.com"
+    for i in range(SEED_USERS):
         country = random.choice(COUNTRIES)
-        users.append((uid, email, country))
-        RECENT_USERS.append(uid)
-        segment = random.choices(CUSTOMER_SEGMENTS, weights=[1,6,2,1])[0]
-        ltv = round(random.uniform(50, 2000), 2) if segment == "VIP" else round(random.uniform(10, 500), 2)
-        seg_rows.append((uid, segment, ltv))
-
+        email = f"user{i+1}@example.com"
+        user_id = f"U{i+1:06d}"
+        users.append((user_id, email, country))
+        if i >= int(SEED_USERS * 0.1):
+            try:
+                RECENT_USERS.append(user_id)
+            except NameError:
+                pass
     products = []
-    inv_global = []
-    inv_by_wh = []
-    prod_supp = []
-
-    for _ in range(SEED_PRODUCTS):
-        pid = rid("p", 8)
-        title = " ".join(random.sample(["Ultra","Pro","Max","Nano","Air","Lite","Edge","Prime","Neo","Pulse","Core","Elite"], k=2))
+    for i in range(SEED_PRODUCTS):
         category = random.choice(CATEGORIES)
-        price = round(random.uniform(5.0, 900.0), 2)
-        products.append((pid, title, category, price))
-        total_qty = random.randint(50, 1000)
-        inv_global.append((pid, total_qty))
-        RECENT_PRODUCTS.append(pid)
-        for sid, *_ in random.sample(suppliers, k=random.randint(1, min(3, len(suppliers)))):
-            cost = round(price * random.uniform(0.3, 0.7), 2)
-            lead = random.randint(3, 21)
-            prod_supp.append((pid, sid, cost, lead))
-        remain = total_qty
-        for wid in list(RECENT_WAREHOUSES)[:-1]:
-            if remain <= 0:
-                break
-            alloc = random.randint(0, max(0, total_qty // 3))
-            reserv = random.randint(0, alloc // 4)
-            inv_by_wh.append((wid, pid, alloc, reserv))
-            remain -= alloc
-        if remain > 0 and RECENT_WAREHOUSES:
-            last = list(RECENT_WAREHOUSES)[-1]
-            reserv = random.randint(0, remain // 4)
-            inv_by_wh.append((last, pid, remain, reserv))
+        price = round(random.uniform(10.0, 500.0), 2)
+        product_id = f"P{i+1:06d}"
+        products.append((product_id, f"Product {i+1}", category, price))
+        if i >= int(SEED_PRODUCTS * 0.1):
+            try:
+                RECENT_PRODUCTS.append(product_id)  # noqa: F821
+            except NameError:
+                pass
 
-    with conn.cursor() as cur:
-        execute_batch(cur, "INSERT INTO warehouses(warehouse_id,name,country,region) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", warehouses)
-        execute_batch(cur, "INSERT INTO suppliers(supplier_id,name,country,rating) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", suppliers)
-        execute_batch(cur, "INSERT INTO users(user_id,email,country) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", users)
-        execute_batch(cur, "INSERT INTO products(product_id,title,category,price_usd) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", products)
-        execute_batch(cur, "INSERT INTO inventory(product_id,qty) VALUES (%s,%s) ON CONFLICT (product_id) DO UPDATE SET qty=EXCLUDED.qty", inv_global)
-        execute_batch(cur, "INSERT INTO customer_segments(user_id,segment,lifetime_value) VALUES (%s,%s,%s) ON CONFLICT (user_id) DO UPDATE SET segment=EXCLUDED.segment, lifetime_value=EXCLUDED.lifetime_value", seg_rows)
-        execute_batch(cur, "INSERT INTO product_suppliers(product_id,supplier_id,cost_usd,lead_time_days) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING", prod_supp)
-        execute_batch(cur, "INSERT INTO warehouse_inventory(warehouse_id,product_id,qty,reserved_qty) VALUES (%s,%s,%s,%s) ON CONFLICT (warehouse_id,product_id) DO UPDATE SET qty=EXCLUDED.qty, reserved_qty=EXCLUDED.reserved_qty", inv_by_wh)
+    # --- Legacy/global inventory snapshot ---
+    inv_global = [(pid, random.randint(0, 1000)) for pid, _, _, _ in products]
+
+    # --- Customer segments ---
+    seg_weights = [0.05, 0.70, 0.20, 0.05]
+    seg_rows = []
+    for uid, _, _ in users:
+        segment = random.choices(CUSTOMER_SEGMENTS, weights=seg_weights)[0]
+        ltv = {
+            "VIP": random.uniform(5000, 50000),
+            "Regular": random.uniform(500, 5000),
+            "New": random.uniform(0, 500),
+            "Churned": random.uniform(0, 1000),
+        }[segment]
+        seg_rows.append((uid, segment, round(ltv, 2)))
+
+    # --- Product ↔ Supplier relations ---
+    prod_supp = []
+    for pid, _, _, price in products:
+        num_suppliers = random.randint(1, 3)
+        chosen = random.sample(suppliers, min(num_suppliers, len(suppliers)))
+        for sid, *_ in chosen:
+            cost = round(float(price) * random.uniform(0.3, 0.7), 2)
+            lead_time = random.randint(3, 21)
+            prod_supp.append((pid, sid, cost, lead_time))
+
+    # --- Warehouse inventory (only WH### IDs from `warehouses`) ---
+    inv_by_wh = []
+    for wid, _, _, _ in warehouses:
+        for pid, _, _, _ in products:
+            if random.random() < 0.8:
+                qty = random.randint(10, 500)
+                reserved = random.randint(0, min(qty, 50))
+                inv_by_wh.append((wid, pid, qty, reserved))
+
+    # --- Single transaction for speed & FK safety ---
+    prev_autocommit = getattr(conn, "autocommit", False)
+    conn.autocommit = False
+    try:
+        with conn.cursor() as cur:
+            # Parents first
+            execute_batch(cur,
+                "INSERT INTO warehouses(warehouse_id,name,country,region) "
+                "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                warehouses)
+            execute_batch(cur,
+                "INSERT INTO suppliers(supplier_id,name,country,rating) "
+                "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                suppliers)
+            execute_batch(cur,
+                "INSERT INTO users(user_id,email,country) "
+                "VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                users)
+            execute_batch(cur,
+                "INSERT INTO products(product_id,title,category,price_usd) "
+                "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                products)
+
+            # Then dependents
+            execute_batch(cur,
+                "INSERT INTO inventory(product_id,qty) "
+                "VALUES (%s,%s) "
+                "ON CONFLICT (product_id) DO UPDATE SET qty=EXCLUDED.qty",
+                inv_global)
+            execute_batch(cur,
+                "INSERT INTO customer_segments(user_id,segment,lifetime_value) "
+                "VALUES (%s,%s,%s) "
+                "ON CONFLICT (user_id) DO UPDATE SET segment=EXCLUDED.segment, lifetime_value=EXCLUDED.lifetime_value",
+                seg_rows)
+            execute_batch(cur,
+                "INSERT INTO product_suppliers(product_id,supplier_id,cost_usd,lead_time_days) "
+                "VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                prod_supp)
+            execute_batch(cur,
+                "INSERT INTO warehouse_inventory(warehouse_id,product_id,qty,reserved_qty) "
+                "VALUES (%s,%s,%s,%s) "
+                "ON CONFLICT (warehouse_id,product_id) DO UPDATE "
+                "SET qty=EXCLUDED.qty, reserved_qty=EXCLUDED.reserved_qty",
+                inv_by_wh)
+
+        conn.commit()
+    finally:
+        conn.autocommit = prev_autocommit
+
+    print(f"✅ Seeded: {len(users)} users, {len(products)} products, {len(warehouses)} warehouses, {len(suppliers)} suppliers")
+
 
 
 # -----------------------
@@ -280,7 +343,7 @@ def setup_kafka():
         raise RuntimeError("confluent_kafka.schema_registry.avro.AvroSerializer not available; install confluent-kafka[avro]")
 
     orders_schema = '{"type":"record","name":"Order","namespace":"demo","fields":[{"name":"order_id","type":"string"},{"name":"user_id","type":"string"},{"name":"product_id","type":"string"},{"name":"amount","type":"double"},{"name":"currency","type":"string","default":"USD"},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
-    payments_schema = '{"type":"record","name":"Payment","namespace":"demo","fields":[{"name":"payment_id","type":"string"},{"name":"order_id","type":"string"},{"name":"method","type":{"type":"enum","name":"Method","symbols":["CARD","APPLE_PAY","PAYPAL"]}},{"name":"status","type":{"type":"enum","name":"Status","symbols":["PENDING","SETTLED","FAILED"]}},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
+    payments_schema = '{"type":"record","name":"Payment","namespace":"demo","fields":[{"name":"payment_id","type":"string"},{"name":"order_id","type":"string"},{"name":"method","type":{"type":"enum","name":"Method","symbols":["CARD","APPLE_PAY","PAYPAL"]}},{"name":"status","type":{"type":"enum","name":"Status","symbols":["PENDING","SETTLED","FAILED","UNKNOWN"]}},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
     shipments_schema = '{"type":"record","name":"Shipment","namespace":"demo","fields":[{"name":"shipment_id","type":"string"},{"name":"order_id","type":"string"},{"name":"carrier","type":"string"},{"name":"eta_days","type":"int","default":3},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
     invchg_schema = '{"type":"record","name":"InventoryChange","namespace":"demo","fields":[{"name":"change_id","type":"string"},{"name":"warehouse_id","type":"string"},{"name":"product_id","type":"string"},{"name":"change_type","type":{"type":"enum","name":"ChangeType","symbols":["RESTOCK","SALE","DAMAGE","RETURN","TRANSFER","ADJUSTMENT"]}},{"name":"quantity_delta","type":"int"},{"name":"previous_qty","type":"int"},{"name":"new_qty","type":"int"},{"name":"reason","type":["null","string"],"default":null},{"name":"order_id","type":["null","string"],"default":null},{"name":"supplier_id","type":["null","string"],"default":null},{"name":"cost_per_unit","type":["null","double"],"default":null},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
     interactions_schema = '{"type":"record","name":"CustomerInteraction","namespace":"demo","fields":[{"name":"interaction_id","type":"string"},{"name":"user_id","type":"string"},{"name":"session_id","type":"string"},{"name":"interaction_type","type":{"type":"enum","name":"InteractionType","symbols":["PAGE_VIEW","SEARCH","CART_ADD","CART_REMOVE","WISHLIST_ADD","REVIEW","SUPPORT_CHAT"]}},{"name":"product_id","type":["null","string"],"default":null},{"name":"search_query","type":["null","string"],"default":null},{"name":"page_url","type":["null","string"],"default":null},{"name":"duration_ms","type":["null","long"],"default":null},{"name":"user_agent","type":"string"},{"name":"ip_address","type":"string"},{"name":"country","type":"string"},{"name":"ts","type":{"type":"long","logicalType":"timestamp-millis"}}]}'
@@ -441,37 +504,58 @@ def emit_customer_interaction(producer, inter_ser):
          headers=[("entity","customer_interaction"), ("source","fakegen")])
 
 
+def _read_inventory_state(conn, warehouse_id: str, product_id: str):
+    """Return (qty, reserved) for a (warehouse, product). If missing, synthesize a sane default."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT qty, reserved_qty FROM warehouse_inventory WHERE warehouse_id=%s AND product_id=%s",
+            (warehouse_id, product_id),
+        )
+        row = cur.fetchone()
+    return (row or (random.randint(0, 100), 0))
+
+def _delta_reason_sup(change_type: str, prev: int):
+    """Compute delta and auxiliary fields for a given change type."""
+    if change_type == "RESTOCK":
+        delta = random.randint(50, 200)
+        return delta, "Supplier delivery", pick_supplier(), round(random.uniform(10.0, 200.0), 2)
+    if change_type == "SALE":
+        delta = -random.randint(1, min(10, max(1, prev)))
+        return delta, "Customer order fulfillment", None, None
+    if change_type == "DAMAGE":
+        delta = -random.randint(1, min(5, max(1, prev)))
+        return delta, "Warehouse damage", None, None
+    if change_type == "RETURN":
+        delta = random.randint(1, 5)
+        return delta, "Customer return", None, None
+    if change_type == "TRANSFER":
+        delta = -random.randint(1, min(20, max(1, prev))) if prev > 0 else 0
+        return delta, f"Transfer to {pick_warehouse()}", None, None
+    delta = random.randint(-10, 10)
+    return delta, "Inventory audit", None, None
+
+def _apply_reserved_first(delta: int, reserved: int):
+    """Consume reserved stock first when applying negative deltas."""
+    if delta < 0:
+        use_res = min(reserved, -delta)
+        reserved -= use_res
+        delta += use_res
+    return delta, reserved
+
 def emit_inventory_change(producer, invchg_ser, conn):
+    """Emit exactly one inventory-change event and optionally mirror to DB.
+    """
     ts = maybe_late(now_ms())
     wid = pick_warehouse()
     pid = pick_product()
     ctype = random.choice(INVENTORY_CHANGE_TYPES)
-
-    # If Postgres is canonical, read current state to craft a realistic change.
-    # If Kafka is canonical, synthesize from small random walk; DB update optional.
     if CANON_INVENTORY == "postgres":
-        with conn.cursor() as cur:
-            cur.execute("SELECT qty, reserved_qty FROM warehouse_inventory WHERE warehouse_id=%s AND product_id=%s", (wid, pid))
-            row = cur.fetchone()
-            prev, reserved = (row or (random.randint(0, 100), 0))
+        prev, reserved = _read_inventory_state(conn, wid, pid)
     else:
         prev, reserved = random.randint(0, 100), 0
+    delta, reason, supplier_id, cost_per_unit = _delta_reason_sup(ctype, prev)
+    delta, reserved = _apply_reserved_first(delta, reserved)
 
-    if ctype == "RESTOCK":
-        delta = random.randint(50, 200)
-    elif ctype == "SALE":
-        delta = -random.randint(1, min(10, max(1, prev)))
-    elif ctype == "DAMAGE":
-        delta = -random.randint(1, min(5, max(1, prev)))
-    elif ctype == "RETURN":
-        delta = random.randint(1, 5)
-    else:
-        delta = random.randint(-10, 10)
-
-    if delta < 0:
-        use_res = min(reserved, -delta)
-        reserved -= use_res
-        delta += use_res
     new_qty = max(0, prev + delta)
 
     change = {
@@ -482,10 +566,10 @@ def emit_inventory_change(producer, invchg_ser, conn):
         "quantity_delta": delta,
         "previous_qty": prev,
         "new_qty": new_qty,
-        "reason": f"{ctype.lower()}_reason_{rid('',3)}" if ctype in ["DAMAGE","ADJUSTMENT"] else None,
+        "reason": reason if ctype in ["DAMAGE", "ADJUSTMENT", "TRANSFER", "RETURN", "RESTOCK", "SALE"] else None,
         "order_id": random.choice(list(RECENT_ORDERS)) if ctype == "SALE" and RECENT_ORDERS else None,
-        "supplier_id": pick_supplier() if ctype == "RESTOCK" else None,
-        "cost_per_unit": round(random.uniform(10.0, 200.0), 2) if ctype == "RESTOCK" else None,
+        "supplier_id": supplier_id,
+        "cost_per_unit": cost_per_unit,
         "ts": ts,
     }
 
@@ -497,7 +581,6 @@ def emit_inventory_change(producer, invchg_ser, conn):
         serializer=invchg_ser,
         headers=[("entity", "inventory_change"), ("source", "fakegen")],
     )
-
     if CANON_INVENTORY == "postgres" or MIRROR_INVENTORY_TO_DB:
         with conn.cursor() as cur:
             cur.execute(
@@ -510,163 +593,164 @@ def emit_inventory_change(producer, invchg_ser, conn):
                 (wid, pid, new_qty, reserved, new_qty, reserved),
             )
 
-    # If Postgres is canonical, read current state to craft a realistic change.
-    # If Kafka is canonical, synthesize from small random walk; DB update optional.
-    if CANON_INVENTORY == "postgres":
-        with conn.cursor() as cur:
-            cur.execute("SELECT qty, reserved_qty FROM warehouse_inventory WHERE warehouse_id=%s AND product_id=%s", (wid, pid))
-            row = cur.fetchone()
-            prev, reserved = (row or (random.randint(0, 100), 0))
-    else:
-        prev, reserved = random.randint(0, 100), 0
-
-    if ctype == "RESTOCK":
-        delta = random.randint(50, 200)
-    elif ctype == "SALE":
-        delta = -random.randint(1, min(10, max(1, prev)))
-    elif ctype == "DAMAGE":
-        delta = -random.randint(1, min(5, max(1, prev)))
-    elif ctype == "RETURN":
-        delta = random.randint(1, 5)
-    else:
-        delta = random.randint(-10, 10)
-
-    # Apply reserved-first policy for negatives
-    if delta < 0:
-        use_res = min(reserved, -delta)
-        reserved -= use_res
-        delta += use_res
-    new_qty = max(0, prev + delta)
-
-    change = {
-        "change_id": rid("chg"),
-        "warehouse_id": wid,
-        "product_id": pid,
-        "change_type": ctype,
-        "quantity_delta": delta,
-        "previous_qty": prev,
-        "new_qty": new_qty,
-        "reason": f"{ctype.lower()}_reason_{rid('',3)}" if ctype in ["DAMAGE","ADJUSTMENT"] else None,
-        "order_id": random.choice(list(RECENT_ORDERS)) if ctype == "SALE" and RECENT_ORDERS else None,
-        "supplier_id": pick_supplier() if ctype == "RESTOCK" else None,
-        "cost_per_unit": round(random.uniform(10.0, 200.0), 2) if ctype == "RESTOCK" else None,
-        "ts": ts,
-    }
-
-    send(
-        producer,
-        TOPIC_INVENTORY_CHANGES,
-        key=f"{wid}:{pid}",
-        value=change,
-        serializer=invchg_ser,
-        headers=[("entity", "inventory_change"), ("source", "fakegen")],
-    )
-
-    # Mirror to DB only if (a) Postgres is canonical, or (b) mirroring explicitly enabled
-    if CANON_INVENTORY == "postgres" or MIRROR_INVENTORY_TO_DB:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO warehouse_inventory (warehouse_id, product_id, qty, reserved_qty)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (warehouse_id, product_id)
-                DO UPDATE SET qty = %s, reserved_qty = %s, updated_at = now()
-                """,
-                (wid, pid, new_qty, reserved, new_qty, reserved),
-            )
-    wid = pick_warehouse()
-    pid = pick_product()
-    ctype = random.choice(INVENTORY_CHANGE_TYPES)
-    with conn.cursor() as cur:
-        cur.execute("SELECT qty, reserved_qty FROM warehouse_inventory WHERE warehouse_id=%s AND product_id=%s", (wid, pid))
-        row = cur.fetchone()
-        prev, reserved = (row or (random.randint(0, 100), 0))
-    if ctype == "RESTOCK":
-        delta = random.randint(50, 200)
-    elif ctype == "SALE":
-        delta = -random.randint(1, min(10, max(1, prev)))
-    elif ctype == "DAMAGE":
-        delta = -random.randint(1, min(5, max(1, prev)))
-    elif ctype == "RETURN":
-        delta = random.randint(1, 5)
-    else:
-        delta = random.randint(-10, 10)
-    if delta < 0:
-        use_res = min(reserved, -delta)
-        reserved -= use_res
-        delta += use_res
-    new_qty = max(0, prev + delta)
-
-    change = {
-        "change_id": rid("chg"),
-        "warehouse_id": wid,
-        "product_id": pid,
-        "change_type": ctype,
-        "quantity_delta": delta,
-        "previous_qty": prev,
-        "new_qty": new_qty,
-        "reason": f"{ctype.lower()}_reason_{rid('',3)}" if ctype in ["DAMAGE","ADJUSTMENT"] else None,
-        "order_id": random.choice(list(RECENT_ORDERS)) if ctype == "SALE" and RECENT_ORDERS else None,
-        "supplier_id": pick_supplier() if ctype == "RESTOCK" else None,
-        "cost_per_unit": round(random.uniform(10.0, 200.0), 2) if ctype == "RESTOCK" else None,
-        "ts": ts
-    }
-    send(producer, TOPIC_INVENTORY_CHANGES, key=f"{wid}:{pid}", value=change, serializer=invchg_ser,
-         headers=[("entity","inventory_change"), ("source","fakegen")])
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO warehouse_inventory (warehouse_id, product_id, qty, reserved_qty)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (warehouse_id, product_id)
-            DO UPDATE SET qty = %s, reserved_qty = %s, updated_at = now()
-        """, (wid, pid, new_qty, reserved, new_qty, reserved))
 
 
 def emit_order_payment_shipment(producer, orders_ser, payments_ser, shipments_ser):
-    base_ts = now_ms()
-    order_ts = maybe_late(base_ts)
-    order_id = rid("ord")
-    user_id = pick_user()
-    product_id = pick_product()
-    amount = round(random.uniform(5.0, 900.0), 2)
-    currency = random.choice(CURRENCIES)
-    trace_id = rid("tr")
+    """
+    Emit correlated Order -> Payment -> Shipment events.
+    """
 
-    order = sprinkle_bad_record({
-        "order_id": order_id,
-        "user_id": user_id,
+    def _clamp_enum(v, allowed, default):
+        return v if v in allowed else default
+
+    def _ensure_str(v, fallback):
+        return v if isinstance(v, str) and v != "" else fallback
+
+    def _ensure_float(v, fallback):
+        try:
+            return float(v)
+        except Exception:
+            return float(fallback)
+
+    def _ensure_int(v, fallback):
+        try:
+            return int(v)
+        except Exception:
+            return int(fallback)
+
+    base_ts   = now_ms()
+    order_ts  = maybe_late(base_ts)
+    order_id  = rid("ord")
+    user_id   = pick_user()
+    product_id = pick_product()
+    amount    = round(random.uniform(5.0, 900.0), 2)
+    currency  = random.choice(CURRENCIES)
+    trace_id  = rid("tr")
+
+    if not user_id or not product_id:
+        return
+
+    order = {
+        "order_id":   order_id,
+        "user_id":    user_id,
         "product_id": product_id,
-        "amount": amount,
-        "currency": currency,
-        "ts": order_ts,
-    })
-    send(producer, TOPIC_ORDERS, key=order_id, value=order, serializer=orders_ser,
-         headers=[("trace_id", trace_id), ("entity","order"), ("source","fakegen")])
+        "amount":     amount,
+        "currency":   currency,
+        "ts":         order_ts
+    }
+
+    order = sprinkle_bad_record(order)
+    order["order_id"]   = _ensure_str(order.get("order_id"), order_id)
+    order["user_id"]    = _ensure_str(order.get("user_id"), user_id)
+    order["product_id"] = _ensure_str(order.get("product_id"), product_id)
+    order["amount"]     = _ensure_float(order.get("amount"), amount)
+    order["currency"]   = _ensure_str(order.get("currency"), currency)
+
+    send(
+        producer, TOPIC_ORDERS, key=order_id, value=order, serializer=orders_ser,
+        headers=[("trace_id", trace_id), ("entity", "order"), ("source", "fakegen")]
+    )
     RECENT_ORDERS.append(order_id)
 
     if random.random() < P_ORDER_HAS_PAYMENT:
         pay_ts = maybe_late(base_ts + random.randint(10, 2000))
-        pay = sprinkle_bad_record({
-            "payment_id": rid("pay"),
-            "order_id": order_id,
-            "method": random.choice(PAYMENT_METHODS),
-            "status": random.choices(PAYMENT_STATUS, weights=[2,5,1])[0],
-            "ts": pay_ts,
-        })
-        send(producer, TOPIC_PAYMENTS, key=pay["payment_id"], value=pay, serializer=payments_ser,
-             headers=[("trace_id", trace_id), ("entity","payment"), ("source","fakegen")])
+        pay_status = random.choices(PAYMENT_STATUS, weights=[2, 5, 1])[0]
+        pay_method = random.choice(PAYMENT_METHODS)
 
-    if random.random() < P_ORDER_HAS_SHIPMENT:
-        shp_ts = maybe_late(base_ts + random.randint(5000, 60000))
-        shp = sprinkle_bad_record({
-            "shipment_id": rid("shp"),
-            "order_id": order_id,
-            "carrier": random.choice(CARRIERS),
-            "eta_days": random.choice([1,2,3,4,5]),
-            "ts": shp_ts,
-        })
-        send(producer, TOPIC_SHIPMENTS, key=shp["shipment_id"], value=shp, serializer=shipments_ser,
-             headers=[("trace_id", trace_id), ("entity","shipment"), ("source","fakegen")])
+        pay = {
+            "payment_id": rid("pay"),
+            "order_id":   order_id,
+            "method":     pay_method,
+            "status":     pay_status,
+            "ts":         pay_ts
+        }
+        pay = sprinkle_bad_record(pay)
+
+        pay["payment_id"] = _ensure_str(pay.get("payment_id"), rid("pay"))
+        pay["order_id"]   = _ensure_str(pay.get("order_id"), order_id)
+        pay["method"]     = _clamp_enum(pay.get("method"), PAYMENT_METHODS, pay_method)   # keep enum valid
+        pay["status"]     = _clamp_enum(pay.get("status"), PAYMENT_STATUS, pay_status)    # keep enum valid
+        pay["ts"]         = _ensure_int(pay.get("ts"), pay_ts)
+
+        send(
+            producer, TOPIC_PAYMENTS, key=pay["payment_id"], value=pay, serializer=payments_ser,
+            headers=[("trace_id", trace_id), ("entity", "payment"), ("source", "fakegen")]
+        )
+
+        if pay["status"] == "SETTLED" and random.random() < P_ORDER_HAS_SHIPMENT:
+            shp_ts = maybe_late(base_ts + random.randint(5000, 60000))
+            carrier = random.choice(CARRIERS)
+            eta     = random.choice([1, 2, 3, 4, 5])
+
+            shp = {
+                "shipment_id": rid("shp"),
+                "order_id":    order_id,
+                "carrier":     carrier,   
+                "eta_days":    eta,       
+                "ts":          shp_ts
+            }
+            shp = sprinkle_bad_record(shp)
+
+            shp["shipment_id"] = _ensure_str(shp.get("shipment_id"), rid("shp"))
+            shp["order_id"]    = _ensure_str(shp.get("order_id"), order_id)
+            shp["carrier"]     = _ensure_str(shp.get("carrier"), carrier)
+            shp["eta_days"]    = _ensure_int(shp.get("eta_days"), eta)
+            shp["ts"]          = _ensure_int(shp.get("ts"), shp_ts)
+
+            send(
+                producer, TOPIC_SHIPMENTS, key=shp["shipment_id"], value=shp, serializer=shipments_ser,
+                headers=[("trace_id", trace_id), ("entity", "shipment"), ("source", "fakegen")]
+            )
+
+def clear_postgres(conn):
+    """Truncate all demo tables for a fresh start."""
+    tables = [
+        "warehouse_inventory",
+        "product_suppliers",
+        "customer_segments",
+        "inventory",
+        "products",
+        "users",
+        "suppliers",
+        "warehouses",
+    ]
+    with conn.cursor() as cur:
+        for tbl in tables:
+            cur.execute(f"TRUNCATE TABLE {tbl} CASCADE")
+    conn.commit()
+    print("🧹 Postgres tables truncated")
+
+def clear_kafka():
+    """Delete and recreate demo Kafka topics."""
+    topics = [
+        TOPIC_ORDERS,
+        TOPIC_PAYMENTS,
+        TOPIC_SHIPMENTS,
+        TOPIC_INVENTORY_CHANGES,
+        TOPIC_CUSTOMER_INTERACTIONS,
+    ]
+    admin = AdminClient({"bootstrap.servers": BOOTSTRAP})
+
+    # delete topics
+    print("🧹 Deleting Kafka topics...")
+    futures = admin.delete_topics(topics, operation_timeout=10)
+    for t, f in futures.items():
+        try:
+            f.result()
+            print(f"  ✨ Deleted topic {t}")
+        except Exception as e:
+            print(f"  ⚠️ Delete failed for {t}: {e}")
+
+    # recreate them (so producers won’t block later)
+    print("📝 Re-creating topics...")
+    new_topics = [NewTopic(t, num_partitions=3, replication_factor=1) for t in topics]
+    futures = admin.create_topics(new_topics)
+    for t, f in futures.items():
+        try:
+            f.result()
+            print(f"  ✅ Re-created topic {t}")
+        except Exception as e:
+            print(f"  ⚠️ Create failed for {t}: {e}")
 
 # -----------------------
 # Main loop
@@ -677,6 +761,17 @@ running = True
 def _sig(*_):
     global running
     running = False
+    print("\n🛑 Shutdown signal received – cleaning up playground...")
+    try:
+        conn = pg_connect()
+        clear_postgres(conn)
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Postgres cleanup failed: {e}")
+    try:
+        clear_kafka()
+    except Exception as e:
+        print(f"⚠️ Kafka cleanup failed: {e}")
 
 signal.signal(signal.SIGINT, _sig)
 signal.signal(signal.SIGTERM, _sig)
