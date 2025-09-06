@@ -40,9 +40,6 @@ Data Forge includes a complete modern data stack with industry-standard tools:
 - **JupyterLab** → Interactive data science environment
 
 ### 🔧 Support Services
-
-### 🏭 Data Generation
-- **Data Generator** → Realistic retail data producer for Kafka topics and Postgres tables
 - Health checks, monitoring, and modular startup profiles
 
 ---
@@ -86,9 +83,6 @@ docker compose ps
 docker compose --profile airflow up -d
 
 # Add exploration tools
-
-# Add realistic data generation
-docker compose --profile datagen up -d
 docker compose --profile explore up -d
 ```
 
@@ -124,12 +118,6 @@ Workflow orchestration:
 - Pre-configured connections to core services
 
 ### `explore` Profile
-
-### `datagen` Profile
-Realistic data generation:
-- Data Generator with 5 Kafka topics (orders, payments, shipments, inventory, interactions)
-- 8 Postgres reference tables with realistic business relationships
-- Configurable event rates and data quality patterns
 Data exploration and visualization:
 - JupyterLab with PySpark, Trino, and analytics libraries
 - Apache Superset for dashboards and BI
@@ -162,7 +150,6 @@ data-forge/
 │   ├── airflow/        # Airflow setup, DAGs, plugins
 │   ├── jupyterlab/     # Jupyter config, notebooks
 │   ├── superset/       # Superset config, dashboards
-│   ├── data-generator/  # Realistic retail data generator
 │   └── */              # Other service configs
 ├── notebooks/          # Sample Jupyter notebooks
 ├── docs/               # Documentation
@@ -291,63 +278,3 @@ Data Forge is built on the shoulders of giants. Special thanks to:
 ---
 
 *The project name "Forge" fits: it's a place where raw metal (data) is hammered into something structured and useful, with you as the smith learning the craft.* ⚒️
-
----
-
-## 🏭 Data Generation
-
-Data Forge includes a realistic retail data generator that produces streaming events and reference data for testing and development.
-
-### 🚀 Quick Start with Data Generation
-
-```bash
-# Start core services with data generation
-docker compose --profile core --profile datagen up -d
-
-# Watch live data flowing
-docker compose logs -f data-generator
-```
-
-### 📊 Generated Data
-
-The data generator produces realistic retail data across **5 Kafka topics** and **8 Postgres tables**:
-
-**Streaming Events (Kafka + Avro):**
-- `demo.orders` → Customer orders with products and amounts
-- `demo.payments` → Payment processing (CARD/APPLE_PAY/PAYPAL)  
-- `demo.shipments` → Shipping events with carriers and ETAs
-- `demo.inventory_changes` → Stock movements (RESTOCK/SALE/DAMAGE/RETURN)
-- `demo.customer_interactions` → User behavior (PAGE_VIEW/SEARCH/CART_ADD)
-
-**Reference Data (Postgres):**
-- `users`, `products`, `warehouses`, `suppliers` → Core entities
-- `customer_segments`, `product_suppliers` → Business relationships
-- `inventory`, `warehouse_inventory` → Stock tracking
-
-### ⚙️ Realistic Business Logic
-
-- **Diurnal patterns** → Traffic varies 0.4x to 1.4x throughout the day
-- **Entity relationships** → Users have sessions, orders link to payments/shipments
-- **Multi-warehouse** → Inventory distributed across regions with supplier relationships
-- **Data quality** → 0.1% bad records and 5% late events for testing resilience
-
-### 🎛️ Configuration
-
-Control data generation via environment variables:
-
-```bash
-# Event rates (events per second)
-TARGET_EPS=10
-
-# Event distribution weights
-WEIGHT_ORDERS=0.6          # Order/payment/shipment events  
-WEIGHT_INTERACTIONS=0.3    # Customer behavior events
-WEIGHT_INVENTORY_CHG=0.1   # Inventory change events
-
-# Data architecture patterns
-CANON_INVENTORY=postgres   # Inventory source of truth: postgres|kafka
-MIRROR_INVENTORY_TO_DB=false  # Mirror Kafka events to database
-```
-
-See [Data Generator documentation](infra/data-generator/README.md) for complete configuration options.
-

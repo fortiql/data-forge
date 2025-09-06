@@ -1,0 +1,19 @@
+{
+  "type": "record",
+  "name": "InventoryChange",
+  "namespace": "demo",
+  "fields": [
+    {"name": "change_id", "type": "string"},
+    {"name": "warehouse_id", "type": "string"},
+    {"name": "product_id", "type": "string"},
+    {"name": "change_type", "type": {"type": "enum", "name": "ChangeType", "symbols": ["RESTOCK", "SALE", "DAMAGE", "RETURN", "TRANSFER", "ADJUSTMENT"]}},
+    {"name": "quantity_delta", "type": "int"},
+    {"name": "previous_qty", "type": "int"},
+    {"name": "new_qty", "type": "int"},
+    {"name": "reason", "type": ["null", "string"], "default": null},
+    {"name": "order_id", "type": ["null", "string"], "default": null},
+    {"name": "supplier_id", "type": ["null", "string"], "default": null},
+    {"name": "cost_per_unit", "type": ["null", "double"], "default": null},
+    {"name": "ts", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}
