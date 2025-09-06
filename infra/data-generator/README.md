@@ -43,11 +43,11 @@ docker compose --profile core --profile datagen up -d
 ## 🧩 Data Model
 
 **Kafka Topics (Avro):**
-- `demo.orders` → Order events with user/product/amount
-- `demo.payments` → Payment status for orders (CARD/APPLE_PAY/PAYPAL)
-- `demo.shipments` → Shipping events with carrier/ETA
-- `demo.inventory_changes` → Stock movements (RESTOCK/SALE/DAMAGE/RETURN)
-- `demo.customer_interactions` → User behavior (PAGE_VIEW/SEARCH/CART_ADD)
+- `orders` → Order events with user/product/amount
+- `payments` → Payment status for orders (CARD/APPLE_PAY/PAYPAL)
+- `shipments` → Shipping events with carrier/ETA
+- `inventory_changes` → Stock movements (RESTOCK/SALE/DAMAGE/RETURN)
+- `customer_interactions` → User behavior (PAGE_VIEW/SEARCH/CART_ADD)
 
 **Postgres Tables:**
 - `users`, `products`, `warehouses`, `suppliers` → Reference data

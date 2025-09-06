@@ -313,11 +313,11 @@ docker compose logs -f data-generator
 The data generator produces realistic retail data across **5 Kafka topics** and **8 Postgres tables**:
 
 **Streaming Events (Kafka + Avro):**
-- `demo.orders` → Customer orders with products and amounts
-- `demo.payments` → Payment processing (CARD/APPLE_PAY/PAYPAL)  
-- `demo.shipments` → Shipping events with carriers and ETAs
-- `demo.inventory_changes` → Stock movements (RESTOCK/SALE/DAMAGE/RETURN)
-- `demo.customer_interactions` → User behavior (PAGE_VIEW/SEARCH/CART_ADD)
+- `orders` → Customer orders with products and amounts
+- `payments` → Payment processing (CARD/APPLE_PAY/PAYPAL)  
+- `shipments` → Shipping events with carriers and ETAs
+- `inventory_changes` → Stock movements (RESTOCK/SALE/DAMAGE/RETURN)
+- `customer_interactions` → User behavior (PAGE_VIEW/SEARCH/CART_ADD)
 
 **Reference Data (Postgres):**
 - `users`, `products`, `warehouses`, `suppliers` → Core entities
