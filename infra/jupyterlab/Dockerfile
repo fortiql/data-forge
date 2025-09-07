@@ -11,6 +11,9 @@ USER $NB_UID
 RUN pip install --no-cache-dir \
     trino[sqlalchemy] \
     sqlalchemy-trino \
+    confluent-kafka[avro] \
+    avro-python3 \
+    requests \
     psycopg2-binary \
     redis \
     clickhouse-connect \
