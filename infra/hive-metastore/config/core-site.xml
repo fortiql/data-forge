@@ -1,0 +1,143 @@
+<?xml version="1.0"?>
+<configuration>
+    <property>
+        <name>fs.s3a.threads.keepalivetime</name>
+        <value>60</value>
+        <description>Thread keep-alive time in seconds (numeric only)</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.connection.timeout</name>
+        <value>200000</value>
+        <description>Socket connection timeout in milliseconds</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.connection.establish.timeout</name>
+        <value>120000</value>
+        <description>Socket establishment timeout in milliseconds</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.connection.request.timeout</name>
+        <value>60000</value>
+        <description>Request timeout in milliseconds</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.executor.capacity</name>
+        <value>16</value>
+        <description>Thread pool capacity</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.threads.core</name>
+        <value>15</value>
+        <description>Core number of threads in S3A thread pool</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.threads.max</name>
+        <value>96</value>
+        <description>Maximum number of threads in S3A thread pool</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.max.total.tasks</name>
+        <value>50</value>
+        <description>Maximum number of total tasks</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.retry.limit</name>
+        <value>3</value>
+        <description>Number of retries for S3A operations</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.retry.interval</name>
+        <value>500</value>
+        <description>Retry interval in milliseconds</description>
+    </property>
+    
+    <!-- Additional timeout configurations -->
+    <property>
+        <name>fs.s3a.multipart.purge.age</name>
+        <value>86400000</value>
+        <description>Multipart upload purge age in milliseconds (24 hours)</description>
+    </property>
+    
+    <!-- Essential S3A configuration for MinIO -->
+    <property>
+        <name>fs.s3a.endpoint</name>
+        <value>http://minio:9000</value>
+        <description>MinIO endpoint URL</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.access.key</name>
+        <value>minio</value>
+        <description>MinIO access key</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.secret.key</name>
+        <value>minio123</value>
+        <description>MinIO secret key</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+        <description>Enable path-style access for MinIO compatibility</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.connection.ssl.enabled</name>
+        <value>false</value>
+        <description>Disable SSL for local MinIO instance</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+        <description>S3A filesystem implementation</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.aws.credentials.provider</name>
+        <value>org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider</value>
+        <description>Use SimpleAWSCredentialsProvider to avoid AWS SDK v2 dependencies</description>
+    </property>
+    
+    <!-- AWS Signature Configuration for MinIO compatibility -->
+    <property>
+        <name>fs.s3a.signing-algorithm</name>
+        <value>S3SignerType</value>
+        <description>Use S3 signature v2 for MinIO compatibility</description>
+    </property>
+    
+    <property>
+        <name>fs.s3a.s3.client.region</name>
+        <value>us-east-1</value>
+        <description>Default S3 region for MinIO</description>
+    </property>
+    
+    <property>
+        <name>hadoop.rpc.timeout</name>
+        <value>60000</value>
+        <description>RPC timeout in milliseconds</description>
+    </property>
+    
+    <property>
+        <name>ipc.client.connection.maxidletime</name>
+        <value>10000</value>
+        <description>IPC client connection max idle time in milliseconds</description>
+    </property>
+    
+    <property>
+        <name>ipc.client.connect.timeout</name>
+        <value>20000</value>
+        <description>IPC client connect timeout in milliseconds</description>
+    </property>
+</configuration>
