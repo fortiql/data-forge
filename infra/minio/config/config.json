@@ -1,0 +1,14 @@
+{
+	"version": "10",
+	"credential": {
+		"accessKey": "minio",
+		"secretKey": "minio123"
+	},
+	"region": "us-east-1",
+	"browser": "on",
+	"logger": {
+		"console": {
+			"enable": true
+		}
+	}
+}
