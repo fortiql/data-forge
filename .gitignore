@@ -6,3 +6,5 @@ infra/airflow/logs/
 *.log
 .vscode/
 .env
+spark-warehouse/
+tmp/
