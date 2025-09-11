@@ -1,4 +1,4 @@
-# 🔥 Data Forge
+# 🔥 Data Forge - Data Engeneering Playground
 
 **Your modern data stack playground — a self-contained environment where you can spin up the core building blocks of a real data engineering and analytics platform and practice end-to-end workflows.**
 
@@ -96,11 +96,10 @@ docker compose --profile explore up -d
 
 | Service | URL | Default Login |
 |---------|-----|---------------|
-| **Airflow** | http://localhost:8080 | \`admin\` / \`admin\` |
-| **Superset** | http://localhost:8088 | \`admin\` / \`admin\` |
-| **JupyterLab** | http://localhost:8888 | No auth |
+| **Airflow** | http://localhost:8085 | \`admin\` / \`admin\` |
+| **Superset** | http://localhost:8089 | \`admin\` / \`admin\` |
 | **MinIO Console** | http://localhost:9001 | \`minio\` / \`minio123\` |
-| **Trino** | http://localhost:8081 | No auth |
+| **Trino** | http://localhost:8080 | No auth |
 
 ---
 
@@ -124,6 +123,16 @@ Workflow orchestration:
 - Pre-configured connections to core services
 
 ### `explore` Profile
+Data exploration and visualization:
+- **JupyterLab**: Interactive notebooks with PySpark, Trino, and analytics libraries pre-installed
+
+Start with:
+```bash
+docker compose --profile explore up -d
+```
+
+Access:
+- JupyterLab: [http://localhost:8888](http://localhost:8888)
 
 ### `datagen` Profile
 Realistic data generation:
@@ -136,19 +145,29 @@ Data exploration and visualization:
 
 ---
 
-## 📚 Learning Paths
+## 📚 Learning Path
 
-### 🔰 Beginner: Data Pipeline Basics
+- **Quick Connections Example**  
+  _notebooks/examples/quick-connections.ipynb_  
+  Connect to core services (Spark, Trino, MinIO, etc.) and validate your environment.
 
-TBD
+- **Streaming Fundamentals**  
+  _notebooks/lessons/streaming/streaming-fundamentals-lesson.ipynb_  
+  Learn the basics of streaming data, Kafka, and Spark.
 
-### 🎓 Intermediate: CDC & Real-time Analytics  
+- **Multi-Topic Streaming with Schema Registry**  
+  _notebooks/lessons/streaming/multi-topic-streaming-lesson.ipynb_  
+  Ingest and validate events from multiple Kafka topics using Spark and Schema Registry.
 
-TBD
+- **Bronze Layer with Iceberg**  
+  _notebooks/lessons/streaming/bronze-layer-iceberg-example.ipynb_  
+  Build a production-grade raw events (bronze) table using Iceberg, Kafka, and Avro.
 
-### 🚀 Advanced: Data Lake & Lakehouse
+- **Spark DML and Iceberg Time Travel**  
+  _notebooks/lessons/iceberg/spark-iceberg-dml.ipynb_  
+  Perform DML operations, time travel, and table optimization in Iceberg.
 
-TBD
+> See the `notebooks/` directory for hands-on Jupyter notebooks and step-by-step guides.
 
 ---
 
