@@ -1,6 +1,27 @@
-"""Data Forge Fake Generator – SOLID refactor
+"""Data Forge Fake Generator
 
-purpose: generate realistic events with clear boundaries.
+Generates realistic retail data split between Postgres OLTP tables and Kafka event streams.
+Creates multi-dimensional e-commerce scenarios with 8 countries, 5 warehouses, 20 suppliers.
+Architecture:
+- Postgres: Reference data (users, products, warehouses, suppliers) + analytical tables
+- Kafka: Real-time events (orders, payments, shipments, inventory, interactions)
+- Schema Registry: Avro serialization with fallback to embedded schemas
+Business Logic:
+- Order flow: Order → Payment (70%) → Shipment (60%)
+- Customer segments: VIP/Regular/New/Churned based on lifetime value  
+- Inventory events: RESTOCK/SALE/DAMAGE/RETURN/TRANSFER/ADJUSTMENT
+- Geographic distribution: Multi-region operations with realistic patterns
+Performance Features:
+- Token bucket rate limiting with diurnal traffic curves
+- LRU caches for hot data access (90% recent users/products)
+- Batch inserts for seeding, streaming for events
+- Backpressure-safe Kafka production with delivery callbacks
+Data Quality:
+- Referential integrity maintained across all tables
+- Late-arriving events for realistic analytics complexity
+- Trace IDs for event correlation
+- Bad records sprinkled for robust data pipeline testing
+
 SRP: this module only wires and runs the app; logic lives in services.
 DIP: relies on ports and adapters, not concrete libs.
 OCP: add streams by registering services; no core changes.
