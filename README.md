@@ -96,9 +96,9 @@ docker compose --profile explore up -d
 
 | Service | URL | Default Login |
 |---------|-----|---------------|
-| **Airflow** | http://localhost:8085 | \`admin\` / \`admin\` |
-| **Superset** | http://localhost:8089 | \`admin\` / \`admin\` |
-| **MinIO Console** | http://localhost:9001 | \`minio\` / \`minio123\` |
+| **Airflow** | http://localhost:8085 | `admin` / `admin` |
+| **Superset** | http://localhost:8089 | `admin` / `admin` |
+| **MinIO Console** | http://localhost:9001 | `minio` / `minio123` |
 | **Trino** | http://localhost:8080 | No auth |
 
 ---
@@ -208,21 +208,17 @@ cp .env.example .env
 Key variables you might want to customize:
 
 ```bash
-# Database Credentials
 POSTGRES_USER=admin
 POSTGRES_PASSWORD=admin
 CLICKHOUSE_USER=admin  
 CLICKHOUSE_PASSWORD=admin
 
-# Object Storage
 MINIO_ROOT_USER=minio
 MINIO_ROOT_PASSWORD=minio123
 
-# Airflow Admin User
 AIRFLOW_ADMIN_USERNAME=airflow
 AIRFLOW_ADMIN_PASSWORD=airflow
 
-# Superset Admin User  
 SUPERSET_ADMIN_USERNAME=admin
 SUPERSET_ADMIN_PASSWORD=admin
 ```
