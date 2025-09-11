@@ -1,6 +1,6 @@
 # 🧩 Data Generator
 
-Data generator producing 5 Kafka topics and 8 Postgres tables. Clear wiring, focused services, replaceable adapters.
+Realistic retail data generator producing 5 Kafka topics and 8 Postgres tables with configurable event rates and business logic.
 
 ## ⚙️ Configuration
 
@@ -52,8 +52,6 @@ docker compose --profile core --profile datagen up -d
 
 🛑 **Dependencies:** postgres (healthy), kafka (healthy), schema-registry (started)
 
-Container runs `python -u main.py` from `infra/data-generator/`. The module layout uses ports/adapters; no Kafka or Postgres code leaks into services.
-
 ## 🧩 Data Model
 
 **Kafka Topics (Avro):**
@@ -98,7 +96,6 @@ Event distribution adapts to time-of-day patterns. Inventory can be Postgres-can
 - DIP: services depend on ports (`ports/*`), wired in `main.py`.
 - OCP: add streams by appending `(weight, Service)` to `App.services` in `main.py`.
 - ISP: tiny interfaces (`EventPublisher`, `SchemaEncoder`, repositories).
-- Stoic comments/docstrings: short, factual, placed where decisions matter.
 
 ## 🛠️ Docker Image
 

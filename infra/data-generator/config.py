@@ -1,4 +1,4 @@
-"""Stoic Config – SRP: one place to parse and hold configuration.
+"""SRP: one place to parse and hold configuration.
 
 Keep it simple; no side effects beyond reading environment.
 """
