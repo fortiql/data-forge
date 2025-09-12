@@ -20,7 +20,7 @@ done
 echo "MinIO is ready. Setting up buckets and policies..."
 
 BUCKETS=(
-  "iceberg",
+  "iceberg"
   "sandbox"
 )
 
@@ -32,7 +32,7 @@ for bucket in "${BUCKETS[@]}"; do
     echo "Bucket already exists: $bucket"
   fi
   echo "Setting public policy for bucket: $bucket"
-  /usr/bin/mc anonymous set public "minio/$bucket"
+  /usr/bin/mc anonymous set public "minio/$bucket" >/dev/null 2>&1 || true
 done
 
 echo ""

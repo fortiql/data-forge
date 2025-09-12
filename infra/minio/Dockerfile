@@ -1,4 +1,8 @@
+FROM minio/mc:latest AS mc
+
 FROM minio/minio:latest
+
+COPY --from=mc /usr/bin/mc /usr/bin/mc
 
 COPY config/ /root/.minio/
 COPY setup-minio.sh /usr/local/bin/setup-minio.sh

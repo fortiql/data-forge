@@ -86,17 +86,18 @@ docker compose ps
 docker compose --profile airflow up -d
 
 # Add exploration tools
+docker compose --profile explore up -d
 
 # Add realistic data generation
 docker compose --profile datagen up -d
-docker compose --profile explore up -d
 ```
 
 ### 4. Access the Stack
 
 | Service | URL | Default Login |
 |---------|-----|---------------|
-| **Airflow** | http://localhost:8085 | `admin` / `admin` |
+|**Kafka UI**|http://localhost:8082 |No auth|
+| **Airflow** | http://localhost:8085 | `airlfow` / `airflow` |
 | **Superset** | http://localhost:8089 | `admin` / `admin` |
 | **MinIO Console** | http://localhost:9001 | `minio` / `minio123` |
 | **Trino** | http://localhost:8080 | No auth |
