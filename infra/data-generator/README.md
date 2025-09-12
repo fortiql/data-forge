@@ -7,7 +7,7 @@ Realistic retail data generator producing 5 Kafka topics and 8 Postgres tables w
 Core settings via environment variables:
 
 ```bash
-TARGET_EPS=10                    # Events per second (base rate)
+TARGET_EPS=10                   # Events per second (base rate)
 WEIGHT_ORDERS=0.6               # Proportion for order/payment/shipment events
 WEIGHT_INTERACTIONS=0.3         # Proportion for customer interactions
 WEIGHT_INVENTORY_CHG=0.1        # Proportion for inventory changes
@@ -24,6 +24,18 @@ P_UPDATE_INVENTORY=0.02         # Background inventory mutation rate
 P_UPDATE_PRICE=0.001            # Background price change rate
 P_LATE_EVENT=0.05               # Probability of out-of-order events
 P_BAD_RECORD=0.001              # Data quality issues for testing
+```
+
+Connectivity and topics:
+```bash
+KAFKA_BOOTSTRAP=kafka:9092
+SCHEMA_REGISTRY_URL=http://schema-registry:8081
+TOPIC_ORDERS=orders.v1
+TOPIC_PAYMENTS=payments.v1
+TOPIC_SHIPMENTS=shipments.v1
+TOPIC_INVENTORY_CHANGES=inventory-changes.v1
+TOPIC_CUSTOMER_INTERACTIONS=customer-interactions.v1
+PG_DSN="host=postgres port=5432 dbname=demo user=admin password=admin"
 ```
 
 ## 🚀 Running
@@ -77,3 +89,18 @@ docker compose --profile core --profile datagen up -d
 - **Performance:** Token bucket rate limiting with configurable burst capacity
 
 Event distribution adapts to time-of-day patterns. Inventory can be Postgres-canonical (read-modify-write) or Kafka-canonical (event-sourced) depending on architecture needs.
+
+## 🧱 Architecture
+
+- SRP: `services/*` build events only; `adapters/*` handle Kafka/Postgres.
+- DIP: services depend on ports (`ports/*`), wired in `main.py`.
+- OCP: add streams by appending `(weight, Service)` to `App.services` in `main.py`.
+- ISP: tiny interfaces (`EventPublisher`, `SchemaEncoder`, repositories).
+
+## 🛠️ Docker Image
+
+- Base: `python:3.11-slim` with `confluent-kafka` and `psycopg2-binary`.
+- Healthcheck ensures Postgres + Schema Registry are reachable before marking healthy.
+- Entrypoint: `python -u main.py`.
+
+🛑 Note: Avro encoding uses Confluent’s Avro serializer. The image installs `confluent-kafka` and `fastavro`; if you vend your own base image, ensure these are present.
