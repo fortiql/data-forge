@@ -13,10 +13,22 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES}
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: ${AIRFLOW_EXECUTION_API_SERVER_URL}
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: ${AIRFLOW_SCHEDULER_ENABLE_HEALTH_CHECK}
+    AIRFLOW__API_AUTH__JWT_SECRET_KEY: ${AIRFLOW__API_AUTH__JWT_SECRET_KEY}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # MinIO/S3 credentials for Spark + Hadoop S3A in client mode
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    # Optional S3-style aliases used by Spark job
+    S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    S3_ENDPOINT: ${S3_ENDPOINT:-minio:9000}
   volumes:
     - ./infra/airflow/dags:/opt/airflow/dags
     - ./infra/airflow/logs:/opt/airflow/logs
     - ./infra/airflow/plugins:/opt/airflow/plugins
+    - ./spark-jobs:/opt/spark/jobs
   user: "${AIRFLOW_UID}:0"
   depends_on:
     redis:
@@ -42,7 +54,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    profiles: [core]
+    profiles: [airflow,core]
 
   hive-metastore:
     build:
@@ -225,7 +237,7 @@ services:
       - "7077:7077"
       - "8088:8080"
     volumes:
-      - ./processing/spark/jobs:/opt/spark/jobs
+      - ./spark-jobs:/opt/spark/jobs
     healthcheck:
       test: ["CMD", "pidof", "java"]
       interval: 30s
@@ -411,7 +423,7 @@ services:
       resources:
         limits:
           cpus: '1.00'
-          memory: 1024M
+          memory: 2048M
         reservations:
           cpus: '0.50'
           memory: 512M
@@ -453,6 +465,33 @@ services:
         condition: service_completed_successfully
     profiles: [airflow]
 
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 1024M
+        reservations:
+          cpus: '0.50'
+          memory: 512M
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    profiles: [airflow]
+
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -466,6 +505,12 @@ services:
         chown -R "${AIRFLOW_UID}:0" /opt/airflow/
         airflow db migrate
         airflow users create --username ${AIRFLOW_ADMIN_USERNAME} --password ${AIRFLOW_ADMIN_PASSWORD} --firstname ${AIRFLOW_ADMIN_FIRSTNAME} --lastname ${AIRFLOW_ADMIN_LASTNAME} --role Admin --email ${AIRFLOW_ADMIN_EMAIL}
+        airflow connections delete spark_default || true
+        airflow connections add spark_default \
+          --conn-type spark \
+          --conn-host spark://spark-master \
+          --conn-port 7077 \
+          --conn-extra '{"master":"spark://spark-master:7077","deploy_mode":"client","spark_binary":"/opt/spark/bin/spark-submit","conf":{},"env_vars":{}}'
     environment:
       <<: *airflow-common-env
     user: "0:0"
@@ -503,7 +548,7 @@ services:
       - "8888:8888"
     volumes:
       - ./notebooks:/home/jovyan/work
-      - ./processing/spark/jobs:/home/jovyan/spark-jobs
+      - ./spark-jobs:/home/jovyan/spark-jobs
     environment:
       - JUPYTER_ENABLE_LAB=${JUPYTER_ENABLE_LAB}
       - POSTGRES_USER=${POSTGRES_USER}

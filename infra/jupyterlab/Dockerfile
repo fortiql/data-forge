@@ -1,4 +1,4 @@
-FROM jupyter/pyspark-notebook:spark-3.5.0
+FROM jupyter/pyspark-notebook:spark-3.5.6
 
 USER root
 RUN apt-get update && apt-get install -y \
