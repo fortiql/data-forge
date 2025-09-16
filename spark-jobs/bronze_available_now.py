@@ -166,8 +166,6 @@ def main() -> None:
     spark = build_spark()
     spark.sparkContext.setLogLevel("INFO")
     spark.streams.addListener(_ProgressListener())
-
-    # Allow the submitter (DAG) to pass these via Spark conf; fallback to reasonable defaults
     kafka_bootstrap = spark.conf.get("spark.dataforge.kafka.bootstrap", "kafka:9092")
     schema_registry_url = spark.conf.get("spark.dataforge.schema.registry", "http://schema-registry:8081")
 
