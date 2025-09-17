@@ -3,10 +3,11 @@ import os
 from airflow import DAG
 
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.datasets import Dataset
 
 
-default_args = {"owner": "data-platform", "depends_on_past": False, "retries": 0}
+default_args = {"owner": "DataForge", "depends_on_past": False, "retries": 0}
 
 PACKAGES = ",".join([
     "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
@@ -54,26 +55,32 @@ ENV_VARS = {
 }
 
 with DAG(
-    dag_id="event_driven_bronze_available_now",
-    description="Event-triggered AvailableNow bounded ingest to Iceberg + maintenance",
-    start_date=datetime(2024, 1, 1),
+    dag_id="bronze_events_kafka_stream",
+    description="Manage Bronze raw_events table via streaming ingestion from Kafka",
+    doc_md="""\
+        #### DAG Overview
+        This DAG ingests events from Kafka topics into an Iceberg table in the Bronze schema using
+        Spark Structured Streaming with the AvailableNow trigger. It also performs Iceberg maintenance
+        operations such as optimizing data files and expiring old snapshots.
+        """,
+    start_date=None,
     schedule=None,
     catchup=False,
     default_args=default_args,
     params={
-        "topics": ["orders.v1", "payments.v1", "shipments.v1"],
+        "topics": ["orders.v1", "payments.v1", "shipments.v1", "inventory-changes.v1", "customer-interactions.v1"],
         "batch_size": 10000,
-        "checkpoint": "s3a://checkpoints/spark/bronze_raw_events",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
         "starting_offsets": "latest",
-        "table": "iceberg.bronze_example.raw_events",
-        "expire_days": 1,
+        "table": "iceberg.bronze.raw_events",
+        "expire_days": "7d",
     },
-    tags=["streaming", "availableNow", "iceberg", "event-driven"],
+    tags=["streaming", "availableNow", "iceberg"],
 ) as dag:
     bounded_ingest = SparkSubmitOperator(
         task_id="bounded_ingest",
         conn_id="spark_default",
-        application="/opt/spark/jobs/bronze_available_now.py",
+        application="/opt/spark/jobs/bronze_events_kafka_stream.py",
         packages=PACKAGES,
         env_vars=ENV_VARS,
         conf=BASE_CONF,
@@ -90,11 +97,12 @@ with DAG(
             "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
         ],
         verbose=True,
+        outlets=Dataset("s3://iceberg/warehouse/bronze.db/raw_events/")
     )
 
-    def _run_trino_maintenance(table: str):
+    def iceberg_maintenance(table: str, expire_days: str) -> None:
+        """Run Iceberg maintenance operations via Trino."""
         import trino
-        # Expect fully qualified table: catalog.schema.table
         parts = table.split(".")
         if len(parts) != 3:
             raise ValueError(f"Expected table as catalog.schema.table, got: {table}")
@@ -105,7 +113,7 @@ with DAG(
         cur.execute(f"ALTER TABLE {fqtn} EXECUTE optimize")
         _ = cur.fetchall()
         cur.execute(
-            f"ALTER TABLE {fqtn} EXECUTE expire_snapshots(retention_threshold => '7d')"
+            f"ALTER TABLE {fqtn} EXECUTE expire_snapshots(retention_threshold => '{expire_days}')"
         )
         _ = cur.fetchall()
         cur.execute(f"ALTER TABLE {fqtn} EXECUTE remove_orphan_files")
@@ -113,7 +121,7 @@ with DAG(
 
     iceberg_maintenance = PythonOperator(
         task_id="iceberg_maintenance",
-        python_callable=_run_trino_maintenance,
+        python_callable=iceberg_maintenance,
         op_kwargs={
             "table": "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
             "expire_days": "{{ dag_run.conf.expire_days if dag_run and dag_run.conf and dag_run.conf.expire_days is not none else params.expire_days }}",

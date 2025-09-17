@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-
-from __future__ import annotations
-
 import argparse
 import datetime
 import io
@@ -14,7 +11,7 @@ from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
 from pyspark.sql.streaming import StreamingQueryListener
 
 
-APP_NAME = "bronze_available_now"
+APP_NAME = "bronze_events_kafka_stream"
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +31,7 @@ def _json_default(obj):
 
 
 def _decode_udf_fn(value: Optional[bytes], sr_url: str) -> Optional[str]:
-    """Decode Confluent Avro binary to JSON without referencing closures.
-
-    Avoids pickling issues by keeping all logic and imports within a top-level
-    function and taking Schema Registry URL as a literal column.
+    """Decode Confluent Avro binary to JSON.
     """
     if value is None or len(value) < 5:
         return None
@@ -74,7 +68,7 @@ def build_stream(
         .option("startingOffsets", starting_offsets)
         .option("maxOffsetsPerTrigger", str(batch_size))
         .option("failOnDataLoss", "false")
-        .load()
+        .load().withWatermark("timestamp", "1 minute")
     )
 
     decode_udf = F.udf(_decode_udf_fn, T.StringType())
@@ -114,8 +108,36 @@ def build_stream(
     logger.info("Output schema: %s", ordered.schema.simpleString())
     return ordered
 
+def create_database_if_not_exists(spark: SparkSession, db_name: str) -> None:
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}")
+    logger.info("Database ensured: %s", db_name)
 
-def write_available_now(df: DataFrame, *, table: str, checkpoint: str) -> None:
+def create_table_if_not_exists(spark: SparkSession, table: str) -> None:
+    parts = table.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"Table name must be in format catalog.db.table, got: {table}")
+    catalog, db_name, table_name = parts
+    create_database_if_not_exists(spark, db_name)
+    spark.sql(
+        f"""
+        CREATE TABLE IF NOT EXISTS {db_name}.{table_name} (
+            event_source STRING,
+            event_time TIMESTAMP,
+            schema_id INT,
+            payload_size INT,
+            json_payload STRING,
+            partition INT,
+            offset BIGINT
+            )
+        USING iceberg
+        PARTITIONED BY (event_source)
+        TBLPROPERTIES ('write.format.default'='parquet')
+        """
+    )
+    logger.info("Table ensured: %s", table)
+
+
+def write_events(df: DataFrame, *, table: str, checkpoint: str) -> None:
     q = (
         df.writeStream.format("iceberg")
         .option("path", table)
@@ -130,12 +152,12 @@ def write_available_now(df: DataFrame, *, table: str, checkpoint: str) -> None:
 
 
 class _ProgressListener(StreamingQueryListener):
-    def onQueryStarted(self, event):  # type: ignore[override]
+    def onQueryStarted(self, event):
         logger.info("Streaming started: id=%s name=%s", event.id, event.name)
 
-    def onQueryProgress(self, event):  # type: ignore[override]
+    def onQueryProgress(self, event):
         try:
-            p = json.loads(event.progress.json)
+            p = json.loads(event.progress.prettyJson)
             logger.info(
                 "progress: inputRows=%s rowsPerSec=%s batchId=%s",
                 p.get("numInputRows"),
@@ -143,9 +165,9 @@ class _ProgressListener(StreamingQueryListener):
                 p.get("batchId"),
             )
         except Exception:
-            logger.info("progress: %s", event.progress.json)
+            logger.info("progress: %s", event.progress.prettyJson)
 
-    def onQueryTerminated(self, event):  # type: ignore[override]
+    def onQueryTerminated(self, event):
         logger.info("Streaming terminated: id=%s exception=%s", event.id, event.exception)
 
 
@@ -160,11 +182,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.getLevelName("INFO"))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
 
     spark = build_spark()
     spark.sparkContext.setLogLevel("INFO")
+    create_database_if_not_exists(spark, "bronze")
+    create_table_if_not_exists(spark, args.table)
     spark.streams.addListener(_ProgressListener())
     kafka_bootstrap = spark.conf.get("spark.dataforge.kafka.bootstrap", "kafka:9092")
     schema_registry_url = spark.conf.get("spark.dataforge.schema.registry", "http://schema-registry:8081")
@@ -186,7 +210,7 @@ def main() -> None:
         starting_offsets=args.starting_offsets,
         batch_size=args.batch_size,
     )
-    write_available_now(df, table=args.table, checkpoint=args.checkpoint)
+    write_events(df, table=args.table, checkpoint=args.checkpoint)
 
 
 if __name__ == "__main__":

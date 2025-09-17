@@ -1,0 +1,32 @@
+{
+  "name": "Airflow Dev (docker-compose)",
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
+  "service": "airflow-apiserver",
+  "overrideCommand": false,
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "remoteEnv": {
+    "AIRFLOW_HOME": "/opt/airflow",
+    "HOME": "/root"
+  },
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "extensions.supportNodeGlobalNavigator": true,
+        "remote.downloadExtensionsLocally": true,
+        "python.defaultInterpreterPath": "/home/airflow/.local/bin/python",
+        "python.analysis.indexing": true,
+        "python.analysis.inlayHints.functionReturnTypes": true
+      }
+    }
+  }
+}
