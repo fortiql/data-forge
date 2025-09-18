@@ -177,7 +177,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True, help="Checkpoint path (s3a://…)")
     parser.add_argument("--batch-size", type=int, default=10000, help="maxOffsetsPerTrigger")
     parser.add_argument("--starting-offsets", default="latest", choices=["earliest", "latest"])
-    parser.add_argument("--table", default="iceberg.bronze_example.raw_events")
+    parser.add_argument("--table", default="iceberg.bronze.raw_events")
     return parser.parse_args()
 
 
@@ -201,6 +201,22 @@ def main() -> None:
         args.starting_offsets,
         args.table,
     )
+
+    try:
+        if args.starting_offsets == "earliest":
+            jvm = spark._jvm
+            hconf = spark.sparkContext._jsc.hadoopConfiguration()
+            p = jvm.org.apache.hadoop.fs.Path(args.checkpoint)
+            fs = jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hconf)
+            if fs.exists(p):
+                logger.warning(
+                    "starting_offsets=earliest requested, but checkpoint exists at %s. "
+                    "Spark will ignore startingOffsets and resume from the checkpoint. "
+                    "To truly replay from earliest, use a new checkpoint path (and consider rebuilding or writing to a new table to avoid duplicates).",
+                    args.checkpoint,
+                )
+    except Exception as e:
+        logger.info("Unable to verify checkpoint existence (%s); continuing.", e)
 
     df = build_stream(
         spark,

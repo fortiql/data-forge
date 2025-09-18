@@ -104,11 +104,13 @@ Storage is not unbounded. We compact, optimize, and expire snapshots as part of 
 
 ---
 
-## Bounded Streaming Orchestration (Airflow + AvailableNow by Spark Streaming)
+## Bounded Streaming Orchestration (Airflow + Spark Structured Streaming, availableNow trigger)
 
-Some engineers ask: is Airflow for batch and Spark Streaming for streams, so why cross them. The answer is that AvailableNow turns an infinite stream into a finite, catch up run. Airflow handles run level lifecycle, scheduling, retries, and observability. Spark provides record level streaming semantics, offsets, watermarks, and exactly once writes. Crossing the streams is deliberate: orchestration belongs to Airflow, streaming correctness belongs to Spark.
+Engineers often ask: is Airflow for batch and Spark Streaming for streams, why combine them. availableNow is not a new technology. It is a trigger setting in Spark Structured Streaming that tells a streaming query to process all currently available data, advance state and watermarks as needed, commit, and then stop. It turns an infinite stream into a bounded catch up run.
 
-AvailableNow is a hybrid between batch and always on streaming.
+In this pattern, Airflow owns the run lifecycle: scheduling, retries, observability. Spark owns streaming correctness: offsets, watermarks, exactly once writes. Combining them gives bounded streaming. Each run catches up and stops. The checkpoint carries continuity into the next run.
+
+Note: availableNow is different from a plain batch job. The job is a streaming query with checkpoints and streaming semantics, but it terminates when caught up.
 
 ### How it works in this repo
 
@@ -167,8 +169,8 @@ Orchestrating AvailableNow with Airflow hits a reliable, simple sweet spot for B
 Markdown diagram:
 
 ```
-+------------------+        Avro events        +--------+
-| Data Generator   | ----------------------->  | Kafka  |
++------------------+        Avro events         +--------+
+| Data Generator   | ----------------------->   | Kafka  |
 +------------------+                            +--------+
                                                 ^
                          schemas                |
@@ -191,21 +193,21 @@ Markdown diagram:
                                   S3 object storage and paths
                                                 v
                                  +-----------------------------+
-                                 | MinIO (S3-compatible)       |
+                                 | MinIO                       |
                                  +-----------------------------+
                                                 ^
                          checkpointLocation     |
                          s3a://checkpoints/...  |
                                                 |
                                  +-----------------------------+
-                                 | Checkpoints (Spark state)   |
+                                 | Checkpoints                 |
                                  +-----------------------------+
 
 
-+--------+       maintenance + SQL        +-----------------------------+
-| Trino  | --------------------------------> Iceberg Catalog & Tables   |
-+--------+                                  (OPTIMIZE, EXPIRE, ORPHANS) |
-                                           +-----------------------------+
++--------+       maintenance + SQL          +-----------------------------+
+| Trino  | --------------------------------> Iceberg Catalog & Tables     |
++--------+                                  (OPTIMIZE, EXPIRE, ORPHANS)   |
+                                            +-----------------------------+
 ```
 
 ---
@@ -291,7 +293,6 @@ src = (
     .load().withWatermark("timestamp", "1 minute")
 )
 
-# Extract provenance + lightweight payload summary
 ordered = src.select(
     F.col("topic").alias("event_source"),
     F.col("timestamp").alias("event_time"),
@@ -321,13 +322,21 @@ ordered = src.select(
 )
 ```
 
-Checkpoint = the journal of truth. Lose it, and you lose replayability. Respect it.
+The checkpoint is the authoritative resume state. Delete it and you lose exactly-once resumption. To replay, use a fresh checkpoint and rebuild the table (or write to a new table) from earliest.
+
+Production best practice vs demo note
+
+- Production best practice: store a byte for byte copy of the Kafka value with provenance metadata (topic, partition, offset, schema_id, event_time). Avoid transforming or interpreting payloads at ingest time.
+  - Reproducibility: enables reprocessing and rebuilding downstream layers if decoding bugs or schema changes occur.
+  - Auditability: guarantees an exact, verifiable record of what was received.
+  - Flexibility: allows future re decoding for analytics or ML with different decoders.
+- Demo note: for learning and exploration, this repo exposes a `json_payload` column decoded from Avro so you can quickly inspect and query with tools like Trino or Superset.
 
 ---
 
 ## Step 4: Watch the Flow (Trino)
 
-Connect any SQL client to Trino (`http://localhost:8080`) and run:
+Connect any SQL client (e.g. DBeaver) to Trino (`http://localhost:8080`) and run:
 
 ```sql
 SELECT *
@@ -364,7 +373,11 @@ Repeat them until the motions feel natural.
 
 ## A Battle‑Scar Lesson
 
-Daily batch once double‑inserted 300M rows because offsets lived in a fragile side table. It took days to unwind. Offsets belong in checkpoints, not spreadsheets.
+Imagine you’re running a Kafka → Spark batch ingestion job. Offsets aren’t in checkpoints; they’re tracked in a fragile side table — or worse, not tracked at all.
+
+Your Airflow DAG is set with 0 retries to “avoid duplicates.” Someone clicks Clear Task in the UI. Spark reruns, rereads the same offsets, and inserts hundreds of millions of rows again. Days are lost untangling the mess.
+
+That’s why offsets belong in checkpoints, not spreadsheets. With AvailableNow, reruns and retries are safe — Spark resumes exactly where it left off, and Bronze stays clean.
 
 ---
 
@@ -373,6 +386,32 @@ Daily batch once double‑inserted 300M rows because offsets lived in a fragile 
 - Checkpoints are sacred. Version them. Don’t casually delete.
 - Maintenance is daily kata. Run OPTIMIZE and EXPIRE SNAPSHOTS.
 - Observability is armor. Emit metrics: offsets caught, rows written, batch duration.
+
+## Cleanup After Experiments
+
+When you are done experimenting, avoid accidental double-appends by resetting the generator, table, and checkpoint.
+
+- Stop the data generator
+
+```bash
+docker compose stop data-generator
+```
+
+- Drop the Bronze table (so a replay does not append on top)
+
+Run in any Trino client:
+
+```sql
+DROP TABLE IF EXISTS iceberg.bronze.raw_events;
+```
+
+- Remove the checkpoint prefix in MinIO
+
+Use MinIO Console at http://localhost:9001 and delete:
+
+```
+checkpoints/spark/iceberg/bronze/raw_events/
+```
 
 ---
 
