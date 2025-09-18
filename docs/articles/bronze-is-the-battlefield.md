@@ -2,6 +2,8 @@
 
 Don’t just query downstream tables. Capture events, own lineage, and forge the Bronze layer where data engineering truly begins.
 
+Bronze is the raw layer where events first land: offsets, schemas, timestamps, payloads, nothing cleaned and nothing lost.
+
 ---
 
 ## The Trap of SQL Modeling
@@ -23,7 +25,7 @@ Why this hurts teams:
 
 How to escape the trap:
 
-- Start at the source. Capture raw events from Kafka or CDC with offsets, partitions, schema identifiers, and event time.
+- Start at the source. Capture raw events from Kafka / CDC with offsets, partitions, schema identifiers, and event time.
 - Write a Bronze table that preserves provenance fields intact, and treat it as append only.
 - Use a durable checkpoint for ingestion jobs, and treat it as the journal of truth.
 - Teach downstream models to read from Bronze or from a curated Silver built directly on Bronze.
@@ -124,7 +126,7 @@ Key DAG params you can tweak at trigger time:
 - `topics`: `orders.v1,payments.v1,shipments.v1,inventory-changes.v1,customer-interactions.v1`
 - `checkpoint`: `s3a://checkpoints/spark/iceberg/bronze/raw_events` (durable; don’t delete casually)
 - `starting_offsets`: `latest` (default) or `earliest` for backfills
-- `batch_size`: maps to `maxOffsetsPerTrigger` (backpressure)
+- `batch_size`: maps to `maxOffsetsPerTrigger`
 - `table`: `iceberg.bronze.raw_events`
 
 ### What you get
@@ -165,6 +167,7 @@ Orchestrating AvailableNow with Airflow hits a reliable, simple sweet spot for B
 
 ## Architecture
 
+For a consolidated overview of services and profiles, see also: [docs/architecture.md](../../docs/architecture.md)
 
 Markdown diagram:
 
@@ -363,9 +366,9 @@ For those: Flink, always‑on Spark, or a dedicated stream processor.
 
 Open JupyterLab (`docker compose --profile explore up -d`, then http://localhost:8888) and practice the katas:
 
-- Streaming Fundamentals: checkpoints, offsets, Avro wire format: `notebooks/lessons/streaming/streaming-fundamentals-lesson.ipynb`
-- Multi-Topic Streaming: schema metadata, unified checkpoints: `notebooks/lessons/streaming/multi-topic-streaming-lesson.ipynb`
-- Bronze on Iceberg: time travel, snapshot cleanup: `notebooks/lessons/streaming/bronze-layer-iceberg-example.ipynb`
+- [Streaming Fundamentals: checkpoints, offsets, Avro wire format](../../notebooks/lessons/streaming/streaming-fundamentals-lesson.ipynb)
+- [Multi-Topic Streaming: schema metadata, unified checkpoints](../../notebooks/lessons/streaming/multi-topic-streaming-lesson.ipynb)
+- [Bronze on Iceberg: time travel, snapshot cleanup](../../notebooks/lessons/streaming/bronze-layer-iceberg-example.ipynb)
 
 Repeat them until the motions feel natural.
 
@@ -377,7 +380,7 @@ Imagine you’re running a Kafka → Spark batch ingestion job. Offsets aren’t
 
 Your Airflow DAG is set with 0 retries to “avoid duplicates.” Someone clicks Clear Task in the UI. Spark reruns, rereads the same offsets, and inserts hundreds of millions of rows again. Days are lost untangling the mess.
 
-That’s why offsets belong in checkpoints, not spreadsheets. With AvailableNow, reruns and retries are safe — Spark resumes exactly where it left off, and Bronze stays clean.
+**Offsets belong in checkpoints, not spreadsheets.** With AvailableNow, reruns and retries are safe. Spark resumes exactly where it left off, and Bronze stays clean.
 
 ---
 
@@ -412,7 +415,6 @@ Use MinIO Console at http://localhost:9001 and delete:
 ```
 checkpoints/spark/iceberg/bronze/raw_events/
 ```
-
 ---
 
 ## ⚔️ A Dojo, Not a Dogma
@@ -429,12 +431,15 @@ Start here: [Data Forge repo](../../README.md)
 
 ## What’s Next
 
+- This is Part 1 of a series.
 - Part 1.1: CDC - change data capture from Postgres into Kafka and Bronze using Debezium, with schema evolution, delete tombstones, and replay strategy. See infra/debezium/README.md
 - Part 2: Silver - cleaning, dedupe, shaping raw events
 - Part 3: Gold - metrics and models in ClickHouse
-- Part 4: Federation - Trino across Iceberg, ClickHouse, Postgres
+- .. To be continued
 
 Run the DAG. Query Trino. Watch the flow. Then challenge it. Fork it. Break it. Improve it.
+
+👉 Fork Data Forge. Break it. Challenge it. Add your own flows. The battlefield is not mine alone, it is open.
 
 ---
 
