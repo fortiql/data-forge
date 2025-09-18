@@ -22,6 +22,7 @@ echo "MinIO is ready. Setting up buckets and policies..."
 BUCKETS=(
   "iceberg"
   "sandbox"
+  "checkpoints"
 )
 
 for bucket in "${BUCKETS[@]}"; do

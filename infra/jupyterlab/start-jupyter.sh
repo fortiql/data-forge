@@ -1,6 +1,6 @@
 #!/bin/bash
 echo "🚀 Starting JupyterLab for Data Engineering Stack..."
-export SPARK_HOME=/usr/local/spark
+export SPARK_HOME=${SPARK_HOME:-/opt/spark}
 export PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-*.zip:$PYTHONPATH
 export PYSPARK_PYTHON=python3
 export PYSPARK_DRIVER_PYTHON=python3
