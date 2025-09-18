@@ -446,4 +446,4 @@ Run the DAG. Query Trino. Watch the flow. Then challenge it. Fork it. Break it. 
 > The battlefield of data engineering isn’t won by one playbook, it’s forged in shared practice.
 
 This article is part of the [Data Forge](https://github.com/fortiql/data-forge) project.  
-> Published also on Medium: [link]
+> Published also on Medium: [link](https://medium.com/@thedatainsight/bronze-is-the-battlefield-why-real-data-engineers-start-at-the-source-6eaa16730f0a)
