@@ -14,7 +14,7 @@ Postgres replicas look tempting: connect Trino, query snapshots, move on. The tr
 - **Schema fidelity** – CDC pairs every payload with a Schema Registry ID, keeping historical schemas available. Replicas forget what changed.
 - **Selective capture** – Publications let us stream only the `demo.public.*` tables that matter.
 
-With the change log living in Bronze, R&D no longer maintains oversized “audit” tables in OLTP just to answer historical questions—Trino queries the CDC-backed Iceberg tables directly.
+With the change log living in Bronze, R&D no longer maintains oversized “audit” tables in OLTP just to answer historical questions—Trino queries the CDC-backed Iceberg tables directly. When a non-technical stakeholder asks “why bother with CDC if we already have Kafka events?”, the answer is scope: domain events only cover what producers emit, while OLTP tables accumulate quiet mutations (price corrections, admin fixes, backfills). CDC streams *every* row-level change into Bronze; events remain the business narrative, and together they give analytics the full picture.
 
 The cost: configure Postgres for logical decoding, run Debezium, size WAL retention. The payoff: Bronze remains the forensic log described in the primary article.
 
@@ -36,12 +36,12 @@ Logical replication decodes WAL into relation-level changes (insert/update/delet
 
 ### Debezium: capture and publish
 
-`infra/debezium/Dockerfile` extends `debezium/connect:3.0.0.Final` by installing the Confluent Avro converters and copying connector configs plus the `start-with-connectors.sh` launcher. On boot the script:
+[`infra/debezium/Dockerfile`](../../infra/debezium/Dockerfile) extends `debezium/connect:3.0.0.Final` by installing the Confluent Avro converters and copying connector configs plus [`start-with-connectors.sh`](../../infra/debezium/start-with-connectors.sh). On boot the script:
 
 1. waits for Kafka Connect to report ready;
-2. PUTs each `infra/debezium/config/*.json` file to the REST API (default: `demo-postgres`).
+2. PUTs each [`infra/debezium/config/*.json`](../../infra/debezium/config/) file to the REST API (default: `demo-postgres`).
 
-The connector (`infra/debezium/config/demo-postgres.json`) reuses `demo_slot`, listens to `demo_publication`, snapshots on first run, and emits Avro messages with Schema Registry metadata.
+The connector ([`infra/debezium/config/demo-postgres.json`](../../infra/debezium/config/demo-postgres.json)) reuses `demo_slot`, listens to `demo_publication`, snapshots on first run, and emits Avro messages with Schema Registry metadata.
 
 ### Kafka & Schema Registry
 
@@ -51,33 +51,23 @@ CDC topics follow `demo.public.<table>`. Offsets and schema IDs land alongside p
 
 ## Orchestration and Bronze Writes
 
-The Airflow DAG (`infra/airflow/dags/bronze_events_kafka_stream_dag.py`) now runs two paths:
+The Airflow DAG ([`infra/airflow/dags/bronze_events_kafka_stream_dag.py`](../../infra/airflow/dags/bronze_events_kafka_stream_dag.py)) now runs two paths:
 
-- **`bounded_ingest`** – batches generator topics into the shared `iceberg.bronze.raw_events` table (same flow described in the Bronze article).
-- **`ingest_<table>` tasks** – one per CDC topic using `bronze_cdc_stream.py`. Each Spark job:
+- **`bounded_ingest`** – batches generator topics into the shared `iceberg.bronze.raw_events` table (same flow described in the Bronze article). The job lives in [`infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py); we keep those heterogeneous streams together so downstream consumers can treat generator data as a unified Bronze source.
+- **`ingest_<table>` tasks** – one per CDC topic using [`infra/airflow/processing/spark/jobs/bronze_cdc_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_cdc_stream.py). Each Spark job:
   - reads a single topic with `AvailableNow` semantics;
   - writes to a dedicated Iceberg table (e.g. `iceberg.bronze.demo_public_users`);
   - records `event_source`, `event_time`, partition/offset, schema ID, payload size, JSON payload.
 
-Every ingest task fans into an Iceberg maintenance task that optimises files, expires snapshots, and removes orphans via Trino.
+Every ingest task fans into an Iceberg maintenance task that optimises files, expires snapshots, and removes orphans via Trino. Shared Spark helpers live in [`infra/airflow/processing/spark/jobs/spark_utils.py`](../../infra/airflow/processing/spark/jobs/spark_utils.py).
 
-Spark helpers live in `infra/airflow/processing/spark/jobs/spark_utils.py` (session builder, Avro decoding, Iceberg table creation, checkpoint warnings). Both Spark jobs import it, whether run inside Airflow or manually via `spark-submit`:
-
-```bash
-spark-submit \
-  --master spark://spark-master:7077 \
-  --py-files infra/airflow/processing/spark/jobs/spark_utils.py \
-  infra/airflow/processing/spark/jobs/bronze_cdc_stream.py \
-  --topic demo.public.users \
-  --table iceberg.bronze.demo_public_users \
-  --checkpoint s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_users
-```
+CDC streams stay split per table so each Iceberg dataset mirrors one OLTP table—ideal for deterministic upserts and history tracking—while the generator path intentionally remains a single mixed stream for convenience when analysing the synthetic retail bus.
 
 ---
 
 ## Operating Checklist
 
-- **Start services** – `docker compose --profile core up -d postgres kafka schema-registry debezium spark-master spark-worker trino` (profiles bring the stack up; no single-container commands required).
+- **Start services** – `docker compose --profile core up -d` (the profile brings Postgres, Kafka, Schema Registry, Debezium, Spark, Trino, and other core components up together).
 - **Verify connector** – `curl http://localhost:8083/connectors/demo-postgres/status` should show `RUNNING`.
 - **Seed changes** – run the data generator (`docker compose --profile datagen up -d data-generator`) or insert directly into Postgres tables to trigger snapshot output.
 - **Inspect topics** – use Kafka UI or `docker compose exec kafka kafka-topics.sh --bootstrap-server kafka:9092 --list` and confirm `demo.public.*` topics exist.
