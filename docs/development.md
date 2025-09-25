@@ -20,6 +20,7 @@ Why: Set up, extend, and debug the stack efficiently.
 
 - Environment variables (common):
   - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+  - `POSTGRES_CDC_USER`, `POSTGRES_CDC_PASSWORD`
   - `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB`
   - `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`
   - Airflow/Superset admin credentials

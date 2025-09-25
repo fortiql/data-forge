@@ -1,20 +1,22 @@
-from datetime import datetime
 import os
-from airflow import DAG
+from datetime import datetime
 
+from airflow import DAG
+from airflow.datasets import Dataset
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.datasets import Dataset
 
 
 default_args = {"owner": "DataForge", "depends_on_past": False, "retries": 0}
 
-PACKAGES = ",".join([
-    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
-    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2",
-    "org.apache.hadoop:hadoop-aws:3.3.4",
-    "com.amazonaws:aws-java-sdk-bundle:1.12.791",
-])
+PACKAGES = ",".join(
+    [
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
+        "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2",
+        "org.apache.hadoop:hadoop-aws:3.3.4",
+        "com.amazonaws:aws-java-sdk-bundle:1.12.791",
+    ]
+)
 
 BASE_CONF = {
     "hive.metastore.uris": "thrift://hive-metastore:9083",
@@ -54,33 +56,120 @@ ENV_VARS = {
     "S3_ENDPOINT": os.getenv("S3_ENDPOINT", os.getenv("MINIO_ENDPOINT", "minio:9000")),
 }
 
+SPARK_JOB_BASE = os.getenv("SPARK_JOB_BASE", "/opt/spark/jobs")
+AGG_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_events_kafka_stream.py")
+TOPIC_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_cdc_stream.py")
+SPARK_UTILS = os.getenv("SPARK_UTILS_PATH", os.path.join(SPARK_JOB_BASE, "spark_utils.py"))
+SPARK_PY_FILES = ",".join([SPARK_UTILS])
+
+DEFAULT_BATCH_SIZE = 5000
+DEFAULT_STARTING_OFFSETS = "latest"
+DEFAULT_EXPIRE_DAYS = "7d"
+
+CDC_STREAMS = [
+    {
+        "name": "users",
+        "topic": "demo.public.users",
+        "table": "iceberg.bronze.demo_public_users",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_users",
+    },
+    {
+        "name": "products",
+        "topic": "demo.public.products",
+        "table": "iceberg.bronze.demo_public_products",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_products",
+    },
+    {
+        "name": "inventory",
+        "topic": "demo.public.inventory",
+        "table": "iceberg.bronze.demo_public_inventory",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_inventory",
+    },
+    {
+        "name": "warehouse_inventory",
+        "topic": "demo.public.warehouse_inventory",
+        "table": "iceberg.bronze.demo_public_warehouse_inventory",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_warehouse_inventory",
+    },
+    {
+        "name": "suppliers",
+        "topic": "demo.public.suppliers",
+        "table": "iceberg.bronze.demo_public_suppliers",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_suppliers",
+    },
+    {
+        "name": "customer_segments",
+        "topic": "demo.public.customer_segments",
+        "table": "iceberg.bronze.demo_public_customer_segments",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_customer_segments",
+    },
+]
+
+DEFAULT_PARAMS = {
+    "topics": [
+        "orders.v1",
+        "payments.v1",
+        "shipments.v1",
+        "inventory-changes.v1",
+        "customer-interactions.v1",
+    ],
+    "batch_size": 10000,
+    "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
+    "starting_offsets": "latest",
+    "table": "iceberg.bronze.raw_events",
+    "expire_days": "7d",
+}
+
+
+def table_to_dataset(table: str) -> Dataset:
+    catalog, schema, tbl = table.split(".")
+    return Dataset(f"s3://iceberg/warehouse/{schema}.db/{tbl}/")
+
+
+def iceberg_maintenance(table: str, expire_days: str) -> None:
+    """Run Iceberg maintenance operations via Trino."""
+
+    import trino
+
+    parts = table.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"Expected table as catalog.schema.table, got: {table}")
+    catalog, schema, tbl = parts
+    conn = trino.dbapi.connect(host="trino", port=8080, user="airflow")
+    cur = conn.cursor()
+    fqtn = f"{catalog}.{schema}.{tbl}"
+    cur.execute(f"ALTER TABLE {fqtn} EXECUTE optimize")
+    _ = cur.fetchall()
+    cur.execute(
+        f"ALTER TABLE {fqtn} EXECUTE expire_snapshots(retention_threshold => '{expire_days}')"
+    )
+    _ = cur.fetchall()
+    cur.execute(f"ALTER TABLE {fqtn} EXECUTE remove_orphan_files")
+    _ = cur.fetchall()
+
+
 with DAG(
     dag_id="bronze_events_kafka_stream",
-    description="Manage Bronze raw_events table via streaming ingestion from Kafka",
+    description="Ingest Kafka demo streams and Debezium CDC topics into Bronze",
     doc_md="""\
-        #### DAG Overview
-        This DAG ingests events from Kafka topics into an Iceberg table in the Bronze schema using
-        Spark Structured Streaming with the AvailableNow trigger. It also performs Iceberg maintenance
-        operations such as optimizing data files and expiring old snapshots.
+        #### Bronze Ingestion
+        - `bounded_ingest` captures demo generator topics into a shared Bronze table.
+        - CDC tasks capture each Debezium topic into its own Bronze table.
+        - Each table receives Iceberg maintenance after ingestion.
         """,
     start_date=None,
+    max_active_tasks=2,
     schedule=None,
     catchup=False,
     default_args=default_args,
-    params={
-        "topics": ["orders.v1", "payments.v1", "shipments.v1", "inventory-changes.v1", "customer-interactions.v1"],
-        "batch_size": 10000,
-        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
-        "starting_offsets": "latest",
-        "table": "iceberg.bronze.raw_events",
-        "expire_days": "7d",
-    },
-    tags=["streaming", "availableNow", "iceberg"],
+    params=DEFAULT_PARAMS,
+    tags=["streaming", "cdc", "iceberg"],
 ) as dag:
     bounded_ingest = SparkSubmitOperator(
         task_id="bounded_ingest",
         conn_id="spark_default",
-        application="/opt/spark/jobs/bronze_events_kafka_stream.py",
+        application=AGG_APPLICATION,
+        py_files=SPARK_PY_FILES,
         packages=PACKAGES,
         env_vars=ENV_VARS,
         conf=BASE_CONF,
@@ -97,30 +186,11 @@ with DAG(
             "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
         ],
         verbose=True,
-        outlets=Dataset("s3://iceberg/warehouse/bronze.db/raw_events/")
+        outlets=[Dataset("s3://iceberg/warehouse/bronze.db/raw_events/")],
     )
 
-    def iceberg_maintenance(table: str, expire_days: str) -> None:
-        """Run Iceberg maintenance operations via Trino."""
-        import trino
-        parts = table.split(".")
-        if len(parts) != 3:
-            raise ValueError(f"Expected table as catalog.schema.table, got: {table}")
-        catalog, schema, tbl = parts
-        conn = trino.dbapi.connect(host="trino", port=8080, user="airflow")
-        cur = conn.cursor()
-        fqtn = f"{catalog}.{schema}.{tbl}"
-        cur.execute(f"ALTER TABLE {fqtn} EXECUTE optimize")
-        _ = cur.fetchall()
-        cur.execute(
-            f"ALTER TABLE {fqtn} EXECUTE expire_snapshots(retention_threshold => '{expire_days}')"
-        )
-        _ = cur.fetchall()
-        cur.execute(f"ALTER TABLE {fqtn} EXECUTE remove_orphan_files")
-        _ = cur.fetchall()
-
-    iceberg_maintenance = PythonOperator(
-        task_id="iceberg_maintenance",
+    bounded_maintenance = PythonOperator(
+        task_id="iceberg_maintenance_bronze_raw_events",
         python_callable=iceberg_maintenance,
         op_kwargs={
             "table": "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
@@ -128,4 +198,44 @@ with DAG(
         },
     )
 
-    bounded_ingest >> iceberg_maintenance
+    bounded_ingest >> bounded_maintenance
+
+    for stream in CDC_STREAMS:
+        application_args = [
+            "--topic",
+            stream["topic"],
+            "--table",
+            stream["table"],
+            "--checkpoint",
+            stream["checkpoint"],
+            "--batch-size",
+            str(stream.get("batch_size", DEFAULT_BATCH_SIZE)),
+            "--starting-offsets",
+            stream.get("starting_offsets", DEFAULT_STARTING_OFFSETS),
+        ]
+
+        ingest = SparkSubmitOperator(
+            task_id=f"ingest_{stream['name']}",
+            conn_id="spark_default",
+            application=TOPIC_APPLICATION,
+            py_files=SPARK_PY_FILES,
+            packages=PACKAGES,
+            env_vars=ENV_VARS,
+            conf=BASE_CONF,
+            application_args=application_args,
+            verbose=True,
+            outlets=[table_to_dataset(stream["table"])],
+        )
+
+        maintenance = PythonOperator(
+            task_id=f"iceberg_maintenance_{stream['name']}",
+            python_callable=iceberg_maintenance,
+            op_kwargs={
+                "table": stream["table"],
+                "expire_days": stream.get("expire_days", DEFAULT_EXPIRE_DAYS),
+            },
+        )
+
+        ingest >> maintenance
+
+__all__ = ["dag"]
