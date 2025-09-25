@@ -1,120 +1,105 @@
-# CDC Wins the Bronze: Capturing Postgres Changes for the Raw Layer
+# Bronze Needs CDC
 
-Why the Bronze layer leans on logical replication, how Debezium moves changes into Kafka, and how Data Forge keeps the stream reliable.
-
----
-
-## Replica or CDC?
-
-A Postgres replica wired to Trino feels comfortable: point SQL at a follower, run the joins you already know. The trade-off is latency, load, and missing history.
-
-Logical replication (CDC) streams intent—every `INSERT`, `UPDATE`, `DELETE` with the precise order the OLTP system emitted. For Bronze, that timeline matters more than raw query access.
-
-Reasons CDC wins:
-
-- **Freshness:** WAL decoding emits changes within seconds. Replicas lag whenever VACUUM or checkpoints saturate I/O; the bronze layer wants deltas as they happen.
-- **Replayability:** Replicas expose the current state. CDC preserves the story so you can rebuild silver tables, audit bugs, and explain deletes.
-- **Isolation:** CDC reads the write-ahead log once. Analytics never touches the production tables, unlike replicas that still serve heavy SQL.
-- **Schema fidelity:** With Schema Registry, CDC carries versioned schemas. Replicas only expose “now,” so historical columns disappear silently.
-- **Selective capture:** Publications filter to just the tables analytics needs. Replicas mirror everything, even noisy operational tables.
-
-CDC costs: you must enable logical WAL, size retention, and keep a connector healthy. The payoff is Bronze that records “what happened,” not just “what is.”
+This companion to [Bronze Is the Battlefield](bronze-is-the-battlefield.md) explains why our Bronze layer depends on change data capture, how we wire it with Postgres and Debezium, and how to keep the stream healthy.
 
 ---
 
-## CDC Flow in Data Forge
+## Why We Pick CDC Over Replicas
 
-Profile `core` spins up the necessary services:
+Postgres replicas look tempting: connect Trino, query snapshots, move on. The trade-offs hit the Bronze principles immediately.
 
-- **Postgres (`infra/postgres`)** – OLTP source; init script enables logical WAL, provisions the `cdc_reader` role, and maintains `demo_publication`.
-- **Debezium (`infra/debezium`)** – Kafka Connect worker packaged with the PostgreSQL connector and the Confluent Avro converters.
-- **Kafka (`infra/kafka`)** – event bus for change topics.
-- **Schema Registry (`infra/schema-registry`)** – Avro schema store so downstream consumers keep compatibility guarantees.
+- **Freshness** – Replicas lag when VACUUM or checkpoints spike I/O. Logical decoding streams intent as soon as it lands in WAL.
+- **History** – A replica only shows the latest row. CDC preserves inserts, updates, deletes, and ordering so Bronze can replay the actual story.
+- **Isolation** – Analytics never touches OLTP tables. Debezium reads WAL once; downstream load rides Kafka rather than the production database.
+- **Schema fidelity** – CDC pairs every payload with a Schema Registry ID, keeping historical schemas available. Replicas forget what changed.
+- **Selective capture** – Publications let us stream only the `demo.public.*` tables that matter.
 
-Bring the stack online:
+With the change log living in Bronze, R&D no longer maintains oversized “audit” tables in OLTP just to answer historical questions—Trino queries the CDC-backed Iceberg tables directly.
 
-```
-docker compose --profile core build postgres debezium
-docker compose --profile core up -d postgres kafka schema-registry debezium
-```
-
-Debezium waits for Kafka Connect readiness, then PUTs every config under `/kafka/connectors`. The default `demo-postgres` connector snapshots existing rows and switches to streaming without manual intervention.
+The cost: configure Postgres for logical decoding, run Debezium, size WAL retention. The payoff: Bronze remains the forensic log described in the primary article.
 
 ---
 
-## Postgres Side: Logical Replication
+## How Data Forge Streams CDC
 
-`infra/postgres/init-databases.sh` applies the required settings on startup:
+### Postgres: prepare the source
 
-- `wal_level=logical`, `max_replication_slots=16`, `max_wal_senders=16`, `wal_keep_size=256MB` → WAL is prepared for logical decoding and retains enough history in case consumers pause.
-- `cdc_reader` role → login with `REPLICATION` rights plus `SELECT` on all future tables in `demo.public`.
-- `demo_publication` → covers every table in the `public` schema; recreated idempotently so Debezium can subscribe without superuser privileges.
+`infra/postgres/init-databases.sh` runs on container start and:
 
-The script is idempotent, so restarts keep the publication aligned with any new demo tables.
+- sets `wal_level=logical`, `max_replication_slots=16`, `max_wal_senders=16`, `wal_keep_size=256MB`;
+- creates / updates the `cdc_reader` role with `REPLICATION` and `SELECT` on `demo.public` tables;
+- keeps `demo_publication` aligned with every table in `demo.public`.
+
+Credentials live in `.env` (`POSTGRES_CDC_USER`, `POSTGRES_CDC_PASSWORD`) and `docker-compose.yml` passes them to both Postgres and Debezium.
+
+Logical replication decodes WAL into relation-level changes (insert/update/delete) rather than byte-for-byte pages. By anchoring everything in one publication we can decide—schema by schema—what flows into CDC, keep privilege scope narrow, and evolve tables without rebuilding replication slots.
+
+### Debezium: capture and publish
+
+`infra/debezium/Dockerfile` extends `debezium/connect:3.0.0.Final` by installing the Confluent Avro converters and copying connector configs plus the `start-with-connectors.sh` launcher. On boot the script:
+
+1. waits for Kafka Connect to report ready;
+2. PUTs each `infra/debezium/config/*.json` file to the REST API (default: `demo-postgres`).
+
+The connector (`infra/debezium/config/demo-postgres.json`) reuses `demo_slot`, listens to `demo_publication`, snapshots on first run, and emits Avro messages with Schema Registry metadata.
+
+### Kafka & Schema Registry
+
+CDC topics follow `demo.public.<table>`. Offsets and schema IDs land alongside payloads so Spark can stitch provenance into Bronze tables. Internal topics (`schema-changes.demo`, `my_connect_*`) track schema history and connector state.
 
 ---
 
-## Debezium Side: Connector Anatomy
+## Orchestration and Bronze Writes
 
-`infra/debezium/config/demo-postgres.json` drives the capture. Important fields:
+The Airflow DAG (`infra/airflow/dags/bronze_events_kafka_stream_dag.py`) now runs two paths:
 
-- `database.user` / `database.password` – maps to `POSTGRES_CDC_USER` / `POSTGRES_CDC_PASSWORD` from `.env`.
-- `slot.name=demo_slot` – reuses the slot managed by Postgres; Debezium will resume from the last acknowledged LSN.
-- `publication.name=demo_publication` and `publication.autocreate.mode=disabled` – rely on the pre-created publication.
-- `snapshot.mode=initial` – first run snapshots existing rows before consuming live WAL changes.
-- `schema.include.list=public` – capture every table in the demo schema without prefix mismatches.
-- `key.converter` / `value.converter` – Confluent Avro converters pointing to `http://schema-registry:8081`; ensures keys/values are versioned and validated.
-- `schema.history.internal.kafka.topic=schema-changes.demo` – internal topic where Debezium stores schema evolution events.
+- **`bounded_ingest`** – batches generator topics into the shared `iceberg.bronze.raw_events` table (same flow described in the Bronze article).
+- **`ingest_<table>` tasks** – one per CDC topic using `bronze_cdc_stream.py`. Each Spark job:
+  - reads a single topic with `AvailableNow` semantics;
+  - writes to a dedicated Iceberg table (e.g. `iceberg.bronze.demo_public_users`);
+  - records `event_source`, `event_time`, partition/offset, schema ID, payload size, JSON payload.
 
-The Debezium image installs the Avro converter plugin during `docker build`, so no manual JAR copying is required.
+Every ingest task fans into an Iceberg maintenance task that optimises files, expires snapshots, and removes orphans via Trino.
 
-Health checks:
+Spark helpers live in `infra/airflow/processing/spark/jobs/spark_utils.py` (session builder, Avro decoding, Iceberg table creation, checkpoint warnings). Both Spark jobs import it, whether run inside Airflow or manually via `spark-submit`:
 
-```
-curl http://localhost:8083/connectors/demo-postgres/status
-docker compose exec kafka kafka-topics.sh --bootstrap-server kafka:9092 --list
+```bash
+spark-submit \
+  --master spark://spark-master:7077 \
+  --py-files infra/airflow/processing/spark/jobs/spark_utils.py \
+  infra/airflow/processing/spark/jobs/bronze_cdc_stream.py \
+  --topic demo.public.users \
+  --table iceberg.bronze.demo_public_users \
+  --checkpoint s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_users
 ```
 
-Snapshot completion is quick (the seeded dataset is ~500 rows). After that, any `INSERT`/`UPDATE`/`DELETE` reaches Kafka with second-level lag.
+---
+
+## Operating Checklist
+
+- **Start services** – `docker compose --profile core up -d postgres kafka schema-registry debezium spark-master spark-worker trino` (profiles bring the stack up; no single-container commands required).
+- **Verify connector** – `curl http://localhost:8083/connectors/demo-postgres/status` should show `RUNNING`.
+- **Seed changes** – run the data generator (`docker compose --profile datagen up -d data-generator`) or insert directly into Postgres tables to trigger snapshot output.
+- **Inspect topics** – use Kafka UI or `docker compose exec kafka kafka-topics.sh --bootstrap-server kafka:9092 --list` and confirm `demo.public.*` topics exist.
+- **Watch Bronze tables** – run the Airflow DAG once; confirm Iceberg tables (`SELECT * FROM iceberg.bronze.demo_public_users LIMIT 5;` in Trino) contain CDC payloads with provenance columns.
 
 ---
 
-## Using CDC to Feed Bronze
+## Troubleshooting
 
-Debezium topics follow `demo.public.<table>`. Each message contains:
-
-- **Key:** primary key fields for deterministic upserts.
-- **Value:** structured payload with `before`, `after`, operation code (`op`), source metadata, and the transaction LSN.
-
-In the Bronze ingestion DAG (Spark AvailableNow), we persist both the Avro payload and provenance: topic, partition, offset, schema ID, LSN, and timestamp. From there:
-
-- Silver tables can be rebuilt by replaying Bronze with deterministic merges (`op = c/u/d`).
-- Late arriving updates are handled by offsets, not heuristics.
-- Schema evolution remains traceable because Schema Registry versions accompany every record.
-
-Compared to querying a replica via Trino:
-
-- **History-first:** Bronze keeps the full change log; replicas only show the latest snapshot.
-- **Replay safety:** Kafka offsets + Iceberg snapshots give exactly-once semantics across reruns.
-- **Operational isolation:** Streaming loads never touch the OLTP or its replicas.
-
-If you need a stateful snapshot for analytics, build it in Silver or Gold from Bronze using `last_value` or window functions. The Bronze log stays immutable.
-
----
-
-## Troubleshooting Quick Hits
-
-- Connector 400 referencing `AvroConverter` → rebuild Debezium so the Confluent plugin is present (see `infra/debezium/Dockerfile`).
-- Connector fails creating publication → ensure Postgres has rebuilt with the latest init script or remove the `pg-data` volume for a clean reset.
-- Only heartbeat topic appears → verify tables contain rows and `schema.include.list=public`; the initial snapshot writes topics when data exists.
-- WAL bloat warnings → increase `wal_keep_size` or ensure Debezium stays connected so slots acknowledge progress.
+- **Connector 400 about `AvroConverter`** – rebuild Debezium so the plugins install (`docker compose build debezium`).
+- **Publication errors** – drop the `pg-data` volume or rerun Postgres after the updated init script has been baked; the publication must exist before Debezium starts.
+- **Only heartbeat topic** – ensure tables have rows; the initial snapshot emits topics only when data exists. Check logs for “no changes will be captured” (wrong include list).
+- **WAL retention warnings** – increase `wal_keep_size` or verify Debezium is running; logical slots retain WAL until consumption advances.
+- **Checkpoint cleanup** – stop the data generator: it now clears Kafka topics and MinIO checkpoints so repeats start clean (`infra/data-generator/adapters/minio/checkpoints.py`).
 
 ---
 
 ## Further Reading
 
+- [Bronze Is the Battlefield](bronze-is-the-battlefield.md)
 - [A Guide to Logical Replication and CDC in PostgreSQL](https://airbyte.com/blog/a-guide-to-logical-replication-and-cdc-in-postgresql)
 - Debezium Postgres connector docs
-- Data Forge service guides: [`infra/postgres/README.md`](../../infra/postgres/README.md), [`infra/debezium/README.md`](../../infra/debezium/README.md)
+- Service references: [`infra/postgres/README.md`](../../infra/postgres/README.md), [`infra/debezium/README.md`](../../infra/debezium/README.md)
 
-Bronze earns its name when it records the story, not just the snapshot. CDC is how we get there without burdening the source.
+Bronze stays trustworthy when we capture every change, not just the latest state. CDC is the tool that keeps that promise.
