@@ -38,6 +38,7 @@ import psycopg2
 from config import Config
 from adapters.kafka.factory import build_kafka
 from adapters.kafka.topics import clear_kafka as kafka_clear
+from adapters.minio import clear_checkpoints as checkpoints_clear
 from adapters.postgres.repositories import (
     PgInventoryRepository,
     PgPricingRepository,
@@ -192,14 +193,20 @@ def main():
     def _sig(*_):
         app.running = False
         print("\n🛑 Shutdown signal received – cleaning up playground…")
-        try:
-            clear_postgres(app.conn)
-        except Exception as e:
-            print(f"⚠️ Postgres cleanup failed: {e}")
+        if hasattr(app, "conn"):
+            try:
+                clear_postgres(app.conn)
+            except Exception as e:
+                print(f"⚠️ Postgres cleanup failed: {e}")
         try:
             kafka_clear(cfg)
         except Exception as e:
             print(f"⚠️ Kafka cleanup failed: {e}")
+        try:
+            if cfg.checkpoint_prefixes:
+                checkpoints_clear(cfg.checkpoint_prefixes)
+        except Exception as e:
+            print(f"⚠️ Checkpoint cleanup failed: {e}")
 
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)

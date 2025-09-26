@@ -5,7 +5,7 @@ Why: Understand what runs in each profile and how to start it.
 ## ⚙️ Profiles
 
 - `core` → storage, catalog, streaming, databases.
-  - MinIO, PostgreSQL, ClickHouse, Hive Metastore, Kafka, Schema Registry, Redis
+  - MinIO, PostgreSQL, ClickHouse, Hive Metastore, Kafka, Debezium, Schema Registry, Redis
 - `airflow` → orchestration layer.
   - Airflow API server, Scheduler, Worker, Triggerer, DAG Processor
 - `explore` → exploration and BI.

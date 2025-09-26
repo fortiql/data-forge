@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""AvailableNow ingestion from Kafka topics into a shared Bronze table."""
+"""Single-topic Bronze ingestion for CDC streams.
+
+Reads one Kafka topic, decodes Confluent Avro payloads, and appends the raw
+event into a dedicated Iceberg Bronze table.
+"""
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
-from pyspark.sql.streaming import StreamingQueryListener
 
 from spark_utils import (
         build_spark,
@@ -20,7 +22,7 @@ from spark_utils import (
     )
 
 
-APP_NAME = "bronze_events_kafka_stream"
+APP_NAME_PREFIX = "bronze_cdc_stream"
 
 logger = logging.getLogger(__name__)
 
@@ -28,28 +30,25 @@ logger = logging.getLogger(__name__)
 def build_stream(
     spark: SparkSession,
     *,
-    topics_csv: str,
+    topic: str,
     kafka_bootstrap: str,
     schema_registry_url: str,
     starting_offsets: str,
     batch_size: int,
 ) -> DataFrame:
-    topics = ",".join([t.strip() for t in topics_csv.split(",") if t.strip()])
-
     src = (
         spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", kafka_bootstrap)
-        .option("subscribe", topics)
+        .option("subscribe", topic)
         .option("startingOffsets", starting_offsets)
         .option("maxOffsetsPerTrigger", str(batch_size))
         .option("failOnDataLoss", "false")
         .load()
-        .withWatermark("timestamp", "1 minute")
     )
 
     decode_udf = F.udf(lambda value: decode_confluent_avro(value, schema_registry_url), T.StringType())
 
-    df = (
+    enriched = (
         src.select(
             F.col("topic").alias("event_source"),
             F.col("timestamp").alias("event_time"),
@@ -63,7 +62,7 @@ def build_stream(
         .drop("value")
     )
 
-    ordered = df.select(
+    ordered = enriched.select(
         "event_source",
         "event_time",
         "schema_id",
@@ -76,7 +75,7 @@ def build_stream(
     return ordered
 
 
-def write_events(df: DataFrame, *, table: str, checkpoint: str) -> None:
+def write_stream(df: DataFrame, *, table: str, checkpoint: str) -> None:
     query = (
         df.writeStream.format("iceberg")
         .option("path", table)
@@ -85,38 +84,18 @@ def write_events(df: DataFrame, *, table: str, checkpoint: str) -> None:
         .trigger(availableNow=True)
         .start()
     )
-    logger.info("Query started. Awaiting termination...")
+    logger.info("Streaming query started; awaiting termination…")
     query.awaitTermination()
-    logger.info("Query finished.")
-
-
-class _ProgressListener(StreamingQueryListener):
-    def onQueryStarted(self, event):
-        logger.info("Streaming started: id=%s name=%s", event.id, event.name)
-
-    def onQueryProgress(self, event):
-        try:
-            progress = json.loads(event.progress.prettyJson)
-            logger.info(
-                "progress: inputRows=%s rowsPerSec=%s batchId=%s",
-                progress.get("numInputRows"),
-                progress.get("inputRowsPerSecond"),
-                progress.get("batchId"),
-            )
-        except Exception:  # pragma: no cover - defensive
-            logger.info("progress: %s", event.progress.prettyJson)
-
-    def onQueryTerminated(self, event):
-        logger.info("Streaming terminated: id=%s exception=%s", event.id, event.exception)
+    logger.info("Streaming query finished.")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="AvailableNow bronze ingestion")
-    parser.add_argument("--topics", required=True, help="Comma-separated Kafka topics")
-    parser.add_argument("--checkpoint", required=True, help="Checkpoint path (s3a://…)")
-    parser.add_argument("--batch-size", type=int, default=10000, help="maxOffsetsPerTrigger")
-    parser.add_argument("--starting-offsets", default="latest", choices=["earliest", "latest"])
-    parser.add_argument("--table", default="iceberg.bronze.raw_events")
+    parser = argparse.ArgumentParser(description="AvailableNow Bronze ingestion for a single Kafka topic")
+    parser.add_argument("--topic", required=True, help="Kafka topic to ingest")
+    parser.add_argument("--table", required=True, help="Target Iceberg table (catalog.schema.table)")
+    parser.add_argument("--checkpoint", required=True, help="Checkpoint location (s3a://…)")
+    parser.add_argument("--batch-size", type=int, default=5000, help="maxOffsetsPerTrigger")
+    parser.add_argument("--starting-offsets", choices=["earliest", "latest"], default="latest")
     return parser.parse_args()
 
 
@@ -124,8 +103,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
 
-    spark = build_spark(APP_NAME)
+    app_name = f"{APP_NAME_PREFIX}:{args.table.replace('.', ':')}"
+    spark = build_spark(app_name=app_name)
     spark.sparkContext.setLogLevel("INFO")
+
     ensure_iceberg_table(
         spark,
         args.table,
@@ -139,17 +120,17 @@ def main() -> None:
             offset BIGINT
         """,
     )
-    spark.streams.addListener(_ProgressListener())
+
     kafka_bootstrap = spark.conf.get("spark.dataforge.kafka.bootstrap", "kafka:9092")
     schema_registry_url = spark.conf.get("spark.dataforge.schema.registry", "http://schema-registry:8081")
 
     logger.info(
-        "Starting AvailableNow: topics=%s batch_size=%s checkpoint=%s starting_offsets=%s table=%s",
-        args.topics,
-        args.batch_size,
+        "Starting AvailableNow: topic=%s table=%s checkpoint=%s starting_offsets=%s batch_size=%s",
+        args.topic,
+        args.table,
         args.checkpoint,
         args.starting_offsets,
-        args.table,
+        args.batch_size,
     )
 
     if args.starting_offsets == "earliest":
@@ -157,13 +138,14 @@ def main() -> None:
 
     df = build_stream(
         spark,
-        topics_csv=args.topics,
+        topic=args.topic,
         kafka_bootstrap=kafka_bootstrap,
         schema_registry_url=schema_registry_url,
         starting_offsets=args.starting_offsets,
         batch_size=args.batch_size,
     )
-    write_events(df, table=args.table, checkpoint=args.checkpoint)
+
+    write_stream(df, table=args.table, checkpoint=args.checkpoint)
 
 
 if __name__ == "__main__":

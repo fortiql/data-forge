@@ -4,6 +4,16 @@ set -euo pipefail
 PGHOST="${POSTGRES_HOST:-localhost}"
 PGUSER="${POSTGRES_USER:-postgres}"
 PGDB="${POSTGRES_DB:-postgres}"
+REPLICATION_ROLE="${POSTGRES_CDC_USER:-cdc_reader}"
+REPLICATION_PASSWORD="${POSTGRES_CDC_PASSWORD:-cdc_reader_pwd}"
+
+escape_sql_literal() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+escape_sql_identifier() {
+  printf "%s" "$1" | sed 's/"/""/g'
+}
 
 echo "Checking/creating required databases..."
 
@@ -17,8 +27,34 @@ if ! psql -U "$PGUSER" -d "$PGDB" -tAc "SELECT 1 FROM pg_database WHERE datname 
   psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "CREATE DATABASE demo;"
 fi
 
+echo "Configuring logical replication parameters..."
+psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 <<'EOSQL'
+ALTER SYSTEM SET wal_level = 'logical';
+ALTER SYSTEM SET max_replication_slots = '16';
+ALTER SYSTEM SET max_wal_senders = '16';
+ALTER SYSTEM SET wal_keep_size = '256MB';
+SELECT pg_reload_conf();
+EOSQL
+
+echo "Ensuring logical replication role exists..."
+escaped_role_literal=$(escape_sql_literal "$REPLICATION_ROLE")
+escaped_role_identifier=$(escape_sql_identifier "$REPLICATION_ROLE")
+escaped_pwd_literal=$(escape_sql_literal "$REPLICATION_PASSWORD")
+
+role_exists=$(psql -U "$PGUSER" -d "$PGDB" -At -v ON_ERROR_STOP=1 \
+  -c "SELECT 1 FROM pg_roles WHERE rolname = '${escaped_role_literal}' LIMIT 1;")
+role_exists=$(printf "%s" "$role_exists" | tr -d '[:space:]')
+
+if [[ "$role_exists" != "1" ]]; then
+  psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 \
+    -c "CREATE ROLE \"${escaped_role_identifier}\" WITH LOGIN PASSWORD '${escaped_pwd_literal}' REPLICATION;"
+else
+  psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 \
+    -c "ALTER ROLE \"${escaped_role_identifier}\" WITH LOGIN PASSWORD '${escaped_pwd_literal}' REPLICATION;"
+fi
+
 echo "Ensuring demo tables exist..."
-psql -U "$PGUSER" -d demo -v ON_ERROR_STOP=1 <<EOSQL
+psql -U "$PGUSER" -d demo -v ON_ERROR_STOP=1 -v replication_role="$REPLICATION_ROLE" <<EOSQL
 -- ===== Core OLTP tables (match generator canvas) =====
 
 CREATE TABLE IF NOT EXISTS users(
@@ -112,6 +148,28 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT ALL ON TABLES    TO "$PGUSER";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT ALL ON SEQUENCES TO "$PGUSER";
+
+GRANT CONNECT ON DATABASE demo TO :"replication_role";
+GRANT USAGE ON SCHEMA public TO :"replication_role";
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"replication_role";
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO :"replication_role";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO :"replication_role";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON SEQUENCES TO :"replication_role";
 EOSQL
+
+echo "Ensuring CDC publication exists..."
+publication_exists=$(psql -U "$PGUSER" -d demo -At -v ON_ERROR_STOP=1 \
+  -c "SELECT 1 FROM pg_publication WHERE pubname = 'demo_publication' LIMIT 1;")
+publication_exists=$(printf "%s" "$publication_exists" | tr -d '[:space:]')
+
+if [[ "$publication_exists" != "1" ]]; then
+  psql -U "$PGUSER" -d demo -v ON_ERROR_STOP=1 \
+    -c "CREATE PUBLICATION demo_publication FOR TABLES IN SCHEMA public;"
+else
+  psql -U "$PGUSER" -d demo -v ON_ERROR_STOP=1 \
+    -c "ALTER PUBLICATION demo_publication SET TABLES IN SCHEMA public;"
+fi
 
 echo "Database setup complete!"

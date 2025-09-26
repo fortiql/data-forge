@@ -190,14 +190,14 @@ Markdown diagram:
                                    append writes (exactly once)
                                                 v
                                  +-----------------------------+
-                                 | Iceberg (Bronze tables)     |
-                                 +-----------------------------+
+                                | Iceberg (Bronze tables)     |
+                                +-----------------------------+
                                                 |
                                   S3 object storage and paths
                                                 v
                                  +-----------------------------+
                                  | MinIO                       |
-                                 +-----------------------------+
+                                +-----------------------------+
                                                 ^
                          checkpointLocation     |
                          s3a://checkpoints/...  |
@@ -212,6 +212,10 @@ Markdown diagram:
 +--------+                                  (OPTIMIZE, EXPIRE, ORPHANS)   |
                                             +-----------------------------+
 ```
+
+## What's Next
+
+Ready to wire CDC into this Bronze mindset? Head to [Bronze Needs CDC](cdc-for-bronze.md) for the full CDC playbook, from replication slots to how the `demo.public.*` publication lands in Iceberg.
 
 ---
 
@@ -432,7 +436,7 @@ Start here: [Data Forge repo](../../README.md)
 ## What’s Next
 
 - This is Part 1 of a series.
-- Part 1.1: CDC - change data capture from Postgres into Kafka and Bronze using Debezium, with schema evolution, delete tombstones, and replay strategy. See infra/debezium/README.md
+- Part 1.1: [Bronze Needs CDC](cdc-for-bronze.md) — change data capture from Postgres into Kafka and Bronze using Debezium, with schema evolution, delete tombstones, and replay strategy.
 - Part 2: Silver - cleaning, dedupe, shaping raw events
 - Part 3: Gold - metrics and models in ClickHouse
 - .. To be continued
