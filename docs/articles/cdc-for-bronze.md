@@ -14,7 +14,7 @@ Replicas look comforting. Point Trino at it, query, call it a pipeline. But repl
 - **Schema fidelity** – every change carries a Schema Registry ID. Replicas forget what shifted.
 - **Selective capture** – publications let us stream only what matters (`demo.public.*` in our playground).
 
-With the change log in Bronze, R&D does not hoard audit tables in OLTP to answer history. Trino queries the CDC-backed Iceberg tables directly. When someone asks “why bother with CDC if everything already flows through Kafka?”, the answer is coverage: domain events represent what producers choose to emit; CDC records the quiet mutations—price fixes, admin toggles, backfills—that never become events.
+With the change log in Bronze, R&D does not hoard audit tables in OLTP to answer history. Trino queries the CDC-backed Iceberg tables directly. When someone asks “why bother with CDC if everything already flows through Kafka?”, the answer is coverage: domain events represent what producers choose to emit; CDC records the quiet mutations (price fixes, admin toggles, backfills) that never become events.
 
 The cost is enabling logical decoding, sizing WAL retention, and running Debezium. The payoff is Bronze that actually deserves the name.
 
@@ -59,9 +59,16 @@ This is why Data Forge ships with Postgres, Debezium, Kafka, Schema Registry, an
 
 Credentials live in `.env` and `docker-compose.yml` passes them into Postgres and Debezium. Logical replication decodes WAL into inserts, updates, and deletes. Not raw bytes. Actual intent. One publication gives us schema-by-schema control without rebuilding slots.
 
-A warning from the replication guides: slots only advance when consumers acknowledge the LSN. The log sequence number (LSN) is Postgres' 64-bit pointer into the write-ahead log; every committed change is stamped with a higher LSN so replicas and logical decoders know the exact byte position they have processed. Debezium persists this pointer in its offsets topic, and on restart it asks Postgres to resume streaming from that LSN—no gaps, no duplicates. Because LSNs advance even when Debezium is offline, a paused connector means the slot's restart LSN stops moving and WAL segments accumulate. Monitor slot lag, ensure `wal_keep_size` covers your downtime window, and lean on `pg_slot_advance` only as a last resort.
+A warning from the replication guides: slots only advance when consumers acknowledge the LSN. The log sequence number (LSN) is Postgres' 64-bit pointer into the write-ahead log; every committed change is stamped with a higher LSN so replicas and logical decoders know the exact byte position they have processed. Debezium persists this pointer in its offsets topic, and on restart it asks Postgres to resume streaming from that LSN so there are no gaps or duplicates. Because LSNs advance even when Debezium is offline, a paused connector means the slot's restart LSN stops moving and WAL segments accumulate. Monitor slot lag with queries like:
 
-Additional lessons from the logical replication community:
+```sql
+SELECT slot_name, restart_lsn, confirmed_flush_lsn FROM pg_replication_slots;
+SELECT pid, state, sent_lsn, write_lsn, flush_lsn, replay_lsn FROM pg_stat_replication;
+```
+
+Keep `wal_keep_size` sized for your downtime window, and lean on `pg_slot_advance` only as a last resort.
+
+Additional lessons from the CDC community:
 
 - Snapshot strategy matters. `snapshot.mode=initial` takes a repeatable-read snapshot, `initial_only` captures and stops, `never` assumes you restored another way.
 - Schema evolution happens. Pair Schema Registry with Iceberg so column additions or drops do not break consumers.
@@ -70,7 +77,7 @@ Additional lessons from the logical replication community:
 
 ### Debezium: capture and publish
 
-[`infra/debezium/Dockerfile`](../../infra/debezium/Dockerfile) installs the Confluent Avro converters and copies [`start-with-connectors.sh`](../../infra/debezium/start-with-connectors.sh). On boot the launcher waits for Kafka Connect and `PUT`s every connector JSON in [`infra/debezium/config/`](../../infra/debezium/config/). The default config ([`demo-postgres.json`](../../infra/debezium/config/demo-postgres.json)) reuses `demo_slot`, listens to `demo_publication`, snapshots once, and streams Avro payloads with Schema Registry metadata.
+[`infra/debezium/Dockerfile`](../../infra/debezium/Dockerfile) installs the Confluent Avro converters and copies [`start-with-connectors.sh`](../../infra/debezium/start-with-connectors.sh). On boot the launcher waits for Kafka Connect and `PUT`s every connector JSON in [`infra/debezium/config/`](../../infra/debezium/config/). The default config ([`demo-postgres.json`](../../infra/debezium/config/demo-postgres.json)) reuses `demo_slot`, listens to `demo_publication`, snapshots once, and streams Avro payloads with Schema Registry metadata. Deletes stay as update-style events because `tombstones.on.delete` is `false`; flip it to `true` when you need Kafka tombstones for log compaction.
 
 ### Kafka and Schema Registry
 
@@ -83,6 +90,8 @@ The Airflow DAG ([`infra/airflow/dags/bronze_events_kafka_stream_dag.py`](../../
 - **`bounded_ingest`** – batches generator topics into the shared `iceberg.bronze.raw_events` table. The job lives in [`infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py). Generator feeds already blend multiple event types, so one Bronze table keeps that raw bus intact.
 - **`ingest_<table>` tasks** – one per CDC topic using [`infra/airflow/processing/spark/jobs/bronze_cdc_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_cdc_stream.py). Each job reads a single topic with `AvailableNow`, writes to a dedicated Iceberg table, and records `event_source`, `event_time`, schema IDs, payload sizes, partitions, and offsets.
 
+Those CDC tasks are explicitly listed in `CDC_STREAMS` inside the DAG ([`infra/airflow/dags/bronze_events_kafka_stream_dag.py`](../../infra/airflow/dags/bronze_events_kafka_stream_dag.py#L69)). To onboard a new Postgres table you must add its topic, target table, and checkpoint path there so Airflow schedules the matching ingest job.
+
 #### Example: `iceberg.bronze.demo_public_warehouse_inventory`
 
 The CDC table for `demo.public.warehouse_inventory` follows the common Bronze schema (`event_source`, `event_time`, `schema_id`, `payload_size`, `json_payload`, `partition`, `offset`). The payload itself stores the full Debezium envelope so you can replay, reprocess, or audit every change without decoding Avro again. A real update looks like this:
@@ -94,10 +103,10 @@ The CDC table for `demo.public.warehouse_inventory` follows the common Bronze sc
 - `event_source` is the Kafka topic (`demo.public.warehouse_inventory`), so lineage to the publication stays obvious.
 - `event_time` is when Kafka observed the event; `json_payload.ts_*` fields retain Debezium's original timestamps.
 - `json_payload.after` carries the row image that analytics teams read most often, while `json_payload.before` appears on deletes and updates so you can build slowly changing dimensions or audit trails.
-- `json_payload.source.lsn` mirrors the slot's replay position—use it to confirm ingestion progressed and to correlate with Postgres logs when investigating gaps.
+- `json_payload.source.lsn` mirrors the slot's replay position; use it to confirm ingestion progressed and to correlate with Postgres logs when investigating gaps.
 - Offsets and partitions remain alongside the payload, giving you the option to re-seek a specific record in Kafka if you ever need to rebuild Bronze.
 
-Every ingest task fans into an Iceberg maintenance step (optimize, expire snapshots, remove orphans) via Trino. Shared Spark helpers live in [`infra/airflow/processing/spark/jobs/spark_utils.py`](../../infra/airflow/processing/spark/jobs/spark_utils.py). CDC streams stay split per table so each Iceberg dataset mirrors one OLTP table—perfect for deterministic upserts and history tracking—while the generator path deliberately remains a mixed stream for quick exploration.
+Every ingest task fans into an Iceberg maintenance step (optimize, expire snapshots, remove orphans) via Trino. Shared Spark helpers live in [`infra/airflow/processing/spark/jobs/spark_utils.py`](../../infra/airflow/processing/spark/jobs/spark_utils.py). CDC streams stay split per table so each Iceberg dataset mirrors one OLTP table, which is perfect for deterministic upserts and history tracking.
 
 ---
 
@@ -115,8 +124,6 @@ Every ingest task fans into an Iceberg maintenance step (optimize, expire snapsh
 
 ## Troubleshooting
 
-- **Connector 400 about `AvroConverter`** – rebuild Debezium (`docker compose build debezium`).
-- **Publication errors** – drop the `pg-data` volume or restart Postgres after the updated init script; the publication must exist before Debezium starts.
 - **Only heartbeat topic** – ensure tables have rows. Snapshot mode emits topics only when data exists; check logs for “no changes will be captured” if include lists are wrong.
 - **WAL retention warnings** – bump `wal_keep_size` or confirm Debezium is running; slots hold WAL until consumption advances.
 - **Checkpoint cleanup** – stop the data generator; it now clears Kafka topics and MinIO checkpoints so repeats start clean ([`infra/data-generator/adapters/minio/checkpoints.py`](../../infra/data-generator/adapters/minio/checkpoints.py)).
@@ -146,4 +153,4 @@ Every ingest task fans into an Iceberg maintenance step (optimize, expire snapsh
 - [Debezium Postgres connector docs](https://debezium.io/documentation/reference/stable/connectors/postgresql.html)
 - Service references: [`infra/postgres/README.md`](../../infra/postgres/README.md), [`infra/debezium/README.md`](../../infra/debezium/README.md)
 
-Few companies wire Bronze this way. If you are a data engineer who wants to feel the real thing—CDC, WALs, Debezium connectors, Iceberg sinks—Data Forge is your gym. Spin it up, break it, fix it, and learn what Bronze is supposed to feel like.
+Few companies wire Bronze this way. If you are a data engineer who wants to feel the real thing (CDC, WALs, Debezium connectors, Iceberg sinks), Data Forge is your gym. Spin it up, break it, fix it, and learn what Bronze is supposed to feel like.
