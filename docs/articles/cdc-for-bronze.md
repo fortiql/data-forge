@@ -14,7 +14,7 @@ Replicas look comforting. Point Trino at it, query, call it a pipeline. But repl
 - **Schema fidelity** – every change carries a Schema Registry ID. Replicas forget what shifted.
 - **Selective capture** – publications let us stream only what matters (`demo.public.*` in our playground).
 
-With the change log in Bronze, R&D does not hoard audit tables in OLTP to answer history. Trino queries the CDC-backed Iceberg tables directly. When someone asks “why bother with CDC if everything already flows through Kafka?”, the answer is coverage: domain events represent what producers choose to emit; CDC records the quiet mutations (price fixes, admin toggles, backfills) that never become events.
+With the change log in Bronze, R&D doesn't need to build bloating audit tables in OLTP to answer history. Trino queries the CDC-backed Iceberg tables directly. When someone asks “why bother with CDC if everything already flows through Kafka?”, the answer is coverage: domain events represent what producers choose to emit; CDC records the quiet mutations (price fixes, admin toggles, backfills) that never become events.
 
 The cost is enabling logical decoding, sizing WAL retention, and running Debezium. The payoff is Bronze that actually deserves the name.
 
@@ -56,6 +56,11 @@ This is why Data Forge ships with Postgres, Debezium, Kafka, Schema Registry, an
 - sets `wal_level=logical`, `max_replication_slots=16`, `max_wal_senders=16`, `wal_keep_size=256MB`;
 - creates or updates the `cdc_reader` role with `REPLICATION` and `SELECT` on `demo.public` tables;
 - keeps `demo_publication` aligned with every table in `demo.public`.
+
+Two Postgres primitives make this work:
+
+- **Replication slot** – a logical slot (here `demo_slot`) pegs the database to an LSN for a given consumer. Postgres retains WAL segments until the slot confirms they were consumed. Debezium binds to this slot so it can resume exactly where it left off, even across restarts.
+- **Publication** – a named list of tables that expose change events. `demo_publication` advertises every table in `demo.public`; Debezium subscribes to it so new tables appear without rebuilding the connector. Slots and publications together let Debezium stream only the intended tables while protecting WAL from being pruned beneath the connector.
 
 Credentials live in `.env` and `docker-compose.yml` passes them into Postgres and Debezium. Logical replication decodes WAL into inserts, updates, and deletes. Not raw bytes. Actual intent. One publication gives us schema-by-schema control without rebuilding slots.
 
