@@ -237,5 +237,3 @@ with DAG(
         )
 
         ingest >> maintenance
-
-__all__ = ["dag"]

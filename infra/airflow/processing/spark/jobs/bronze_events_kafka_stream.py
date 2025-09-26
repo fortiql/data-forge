@@ -10,21 +10,7 @@ from pathlib import Path
 from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
 from pyspark.sql.streaming import StreamingQueryListener
 
-UTILS_DIR = Path(__file__).resolve().parent.parent
-if str(UTILS_DIR) not in sys.path:
-    sys.path.insert(0, str(UTILS_DIR))
-
-try:
-    from infra.airflow.processing.spark.spark_utils import (
-        build_spark,
-        decode_confluent_avro,
-        ensure_iceberg_table,
-        payload_size_expr,
-        schema_id_expr,
-        warn_if_checkpoint_exists,
-    )
-except ModuleNotFoundError:  # pragma: no cover - path differs when shipped via --py-files
-    from spark_utils import (  # type: ignore
+from spark_utils import (
         build_spark,
         decode_confluent_avro,
         ensure_iceberg_table,
