@@ -17,13 +17,13 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET_KEY}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY}
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
-    # MinIO/S3 credentials for Spark + Hadoop S3A in client mode
     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    # Optional S3-style aliases used by Spark job
     S3_ACCESS_KEY: ${MINIO_ROOT_USER}
     S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
     S3_ENDPOINT: ${S3_ENDPOINT:-minio:9000}
+    SPARK_HOME: /opt/spark
+    SPARK_JARS_DIR: /opt/spark/jars
   volumes:
     - ./infra/airflow/dags:/opt/airflow/dags
     - ./infra/airflow/logs:/opt/airflow/logs
@@ -238,11 +238,20 @@ services:
       context: ./infra/spark
     environment:
       - SPARK_MODE=${SPARK_MASTER_MODE}
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_PUBLIC_DNS=localhost
+      - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
     ports:
       - "7077:7077"
       - "8088:8080"
+      - "4040:4040"
+    extra_hosts:
+      - "localhost:host-gateway"
     volumes:
-      - ./spark-jobs:/opt/spark/jobs
+      - ./infra/airflow/processing/spark/jobs:/opt/spark/jobs
     healthcheck:
       test: ["CMD", "pidof", "java"]
       interval: 30s
@@ -272,6 +281,18 @@ services:
     environment:
       - SPARK_MODE=${SPARK_WORKER_MODE}
       - SPARK_MASTER_URL=${SPARK_MASTER_URL}
+      - SPARK_PUBLIC_DNS=localhost
+      - SPARK_WORKER_WEBUI_PORT=8091
+      - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+    ports:
+      - "8091:8091"
+    extra_hosts:
+      - "localhost:host-gateway"
+    volumes:
+      - ./infra/airflow/processing/spark/jobs:/opt/spark/jobs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -282,10 +303,10 @@ services:
       resources:
         limits:
           cpus: '1.00'
-          memory: 1024M
+          memory: 2048M
         reservations:
           cpus: '0.50'
-          memory: 512M
+          memory: 1024M
     depends_on:
       spark-master:
         condition: service_healthy
@@ -297,6 +318,18 @@ services:
     environment:
       - SPARK_MODE=${SPARK_WORKER_MODE}
       - SPARK_MASTER_URL=${SPARK_MASTER_URL}
+      - SPARK_PUBLIC_DNS=localhost
+      - SPARK_WORKER_WEBUI_PORT=8092
+      - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+    ports:
+      - "8092:8092"
+    extra_hosts:
+      - "localhost:host-gateway"
+    volumes:
+      - ./infra/airflow/processing/spark/jobs:/opt/spark/jobs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -307,10 +340,10 @@ services:
       resources:
         limits:
           cpus: '1.00'
-          memory: 1024M
+          memory: 2048M
         reservations:
           cpus: '0.50'
-          memory: 512M
+          memory: 1024M
     depends_on:
       spark-master:
         condition: service_healthy
@@ -419,11 +452,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.00'
-          memory: 2048M
+          cpus: '1.50'
+          memory: 3072M
         reservations:
-          cpus: '0.50'
-          memory: 512M
+          cpus: '0.75'
+          memory: 1024M
     depends_on:
       airflow-apiserver:
         condition: service_healthy

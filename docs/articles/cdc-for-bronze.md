@@ -145,6 +145,8 @@ Every ingest task fans into an Iceberg maintenance step (optimize, expire snapsh
 - Debezium connector config: [`infra/debezium/config/demo-postgres.json`](../../infra/debezium/config/demo-postgres.json)
 - Airflow DAG: [`infra/airflow/dags/bronze_events_kafka_stream_dag.py`](../../infra/airflow/dags/bronze_events_kafka_stream_dag.py)
 - Spark jobs: [`infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_events_kafka_stream.py), [`infra/airflow/processing/spark/jobs/bronze_cdc_stream.py`](../../infra/airflow/processing/spark/jobs/bronze_cdc_stream.py), [`infra/airflow/processing/spark/jobs/spark_utils.py`](../../infra/airflow/processing/spark/jobs/spark_utils.py)
+- Silver DAG: [`infra/airflow/dags/silver_retail_service_dag.py`](../../infra/airflow/dags/silver_retail_service_dag.py) — one SparkSubmitOperator per Silver table for parallel refreshes with dimensional precedences.
+- Silver Spark job: [`infra/airflow/processing/spark/jobs/silver_retail_service.py`](../../infra/airflow/processing/spark/jobs/silver_retail_service.py) — pass `--tables dim_customer_profile,fact_order_service` to rebuild targeted outputs; each dimension now emits surrogate keys consumed by the facts.
 - Checkpoint cleaner: [`infra/data-generator/adapters/minio/checkpoints.py`](../../infra/data-generator/adapters/minio/checkpoints.py)
 
 </details>

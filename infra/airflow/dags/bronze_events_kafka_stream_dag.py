@@ -2,65 +2,30 @@ import os
 from datetime import datetime
 
 from airflow import DAG
-from airflow.datasets import Dataset
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.standard.operators.python import PythonOperator
+
+from _spark_common import (
+    iceberg_dataset,
+    iceberg_maintenance,
+    spark_base_conf,
+    spark_env_vars,
+    spark_job_base,
+    spark_packages,
+    spark_utils_py_files,
+)
 
 
 default_args = {"owner": "DataForge", "depends_on_past": False, "retries": 0}
 
-PACKAGES = ",".join(
-    [
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
-        "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2",
-        "org.apache.hadoop:hadoop-aws:3.3.4",
-        "com.amazonaws:aws-java-sdk-bundle:1.12.791",
-    ]
-)
+PACKAGES = spark_packages()
+BASE_CONF = spark_base_conf()
+ENV_VARS = spark_env_vars()
 
-BASE_CONF = {
-    "hive.metastore.uris": "thrift://hive-metastore:9083",
-    "spark.hadoop.hive.metastore.uris": "thrift://hive-metastore:9083",
-    "spark.master": "spark://spark-master:7077",
-    "spark.submit.deployMode": "client",
-    "spark.sql.warehouse.dir": "s3a://iceberg/warehouse",
-    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
-    "spark.sql.defaultCatalog": "iceberg",
-    "spark.sql.catalog.spark_catalog": "org.apache.iceberg.spark.SparkSessionCatalog",
-    "spark.sql.catalog.iceberg": "org.apache.iceberg.spark.SparkCatalog",
-    "spark.sql.catalog.iceberg.type": "rest",
-    "spark.sql.catalog.iceberg.uri": "http://hive-metastore:9001/iceberg",
-    "spark.sql.catalog.iceberg.warehouse": "s3a://iceberg/warehouse",
-    "spark.sql.catalog.iceberg.s3.endpoint": "http://minio:9000",
-    "spark.sql.catalog.iceberg.s3.path-style-access": "true",
-    "spark.sql.catalog.iceberg.s3.region": "us-east-1",
-    "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
-    "spark.hadoop.fs.s3a.path.style.access": "true",
-    "spark.hadoop.fs.s3a.connection.ssl.enabled": "false",
-    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
-    "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-    "spark.dataforge.kafka.bootstrap": "kafka:9092",
-    "spark.dataforge.schema.registry": "http://schema-registry:8081",
-    "spark.sql.shuffle.partitions": "4",
-    "spark.sql.streaming.forceDeleteTempCheckpointLocation": "true",
-    "spark.cleaner.referenceTracking.cleanCheckpoints": "true",
-}
-
-ENV_VARS = {
-    "AWS_REGION": os.getenv("AWS_REGION", "us-east-1"),
-    "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-    "AWS_ACCESS_KEY_ID": os.getenv("MINIO_ROOT_USER", "minio"),
-    "AWS_SECRET_ACCESS_KEY": os.getenv("MINIO_ROOT_PASSWORD", "minio123"),
-    "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minio"),
-    "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minio123"),
-    "S3_ENDPOINT": os.getenv("S3_ENDPOINT", os.getenv("MINIO_ENDPOINT", "minio:9000")),
-}
-
-SPARK_JOB_BASE = os.getenv("SPARK_JOB_BASE", "/opt/spark/jobs")
+SPARK_JOB_BASE = spark_job_base()
 AGG_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_events_kafka_stream.py")
 TOPIC_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_cdc_stream.py")
-SPARK_UTILS = os.getenv("SPARK_UTILS_PATH", os.path.join(SPARK_JOB_BASE, "spark_utils.py"))
-SPARK_PY_FILES = ",".join([SPARK_UTILS])
+SPARK_PY_FILES = spark_utils_py_files()
 
 DEFAULT_BATCH_SIZE = 5000
 DEFAULT_STARTING_OFFSETS = "latest"
@@ -113,39 +78,12 @@ DEFAULT_PARAMS = {
         "inventory-changes.v1",
         "customer-interactions.v1",
     ],
-    "batch_size": 10000,
+    "batch_size": 5000,
     "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
     "starting_offsets": "latest",
     "table": "iceberg.bronze.raw_events",
     "expire_days": "7d",
 }
-
-
-def table_to_dataset(table: str) -> Dataset:
-    catalog, schema, tbl = table.split(".")
-    return Dataset(f"s3://iceberg/warehouse/{schema}.db/{tbl}/")
-
-
-def iceberg_maintenance(table: str, expire_days: str) -> None:
-    """Run Iceberg maintenance operations via Trino."""
-
-    import trino
-
-    parts = table.split(".")
-    if len(parts) != 3:
-        raise ValueError(f"Expected table as catalog.schema.table, got: {table}")
-    catalog, schema, tbl = parts
-    conn = trino.dbapi.connect(host="trino", port=8080, user="airflow")
-    cur = conn.cursor()
-    fqtn = f"{catalog}.{schema}.{tbl}"
-    cur.execute(f"ALTER TABLE {fqtn} EXECUTE optimize")
-    _ = cur.fetchall()
-    cur.execute(
-        f"ALTER TABLE {fqtn} EXECUTE expire_snapshots(retention_threshold => '{expire_days}')"
-    )
-    _ = cur.fetchall()
-    cur.execute(f"ALTER TABLE {fqtn} EXECUTE remove_orphan_files")
-    _ = cur.fetchall()
 
 
 with DAG(
@@ -186,7 +124,7 @@ with DAG(
             "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
         ],
         verbose=True,
-        outlets=[Dataset("s3://iceberg/warehouse/bronze.db/raw_events/")],
+        outlets=[iceberg_dataset("iceberg.bronze.raw_events")],
     )
 
     bounded_maintenance = PythonOperator(
@@ -224,7 +162,7 @@ with DAG(
             conf=BASE_CONF,
             application_args=application_args,
             verbose=True,
-            outlets=[table_to_dataset(stream["table"])],
+            outlets=[iceberg_dataset(stream["table"])],
         )
 
         maintenance = PythonOperator(
