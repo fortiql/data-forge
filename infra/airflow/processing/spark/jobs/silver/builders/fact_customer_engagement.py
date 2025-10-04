@@ -18,6 +18,9 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         F.col("payload.interaction_type").alias("interaction_type"),
         F.col("payload.duration_ms").alias("duration_ms"),
         F.to_timestamp("payload.ts").alias("interaction_ts"),
+        "event_time",
+        F.col("partition").alias("bronze_partition"),
+        F.col("offset").alias("bronze_offset"),
     )
 
     enriched = interactions.withColumn("event_date", F.to_date("interaction_ts"))
@@ -31,7 +34,14 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
             F.sum(F.when(F.col("interaction_type") == "REVIEW", 1).otherwise(0)).alias("reviews"),
             F.sum("duration_ms").alias("total_duration_ms"),
             F.max("interaction_ts").alias("last_interaction_ts"),
+            # Preserve Bronze lineage from latest interaction for traceability
+            F.max(F.struct("interaction_ts", "bronze_partition", "bronze_offset", "event_time"))
+             .alias("latest_bronze_context"),
         )
+        .withColumn("latest_bronze_partition", F.col("latest_bronze_context.bronze_partition"))
+        .withColumn("latest_bronze_offset", F.col("latest_bronze_context.bronze_offset"))
+        .withColumn("latest_event_time", F.col("latest_bronze_context.event_time"))
+        .drop("latest_bronze_context")
     )
 
     customers = spark.table("iceberg.silver.dim_customer_profile").select(
@@ -68,6 +78,9 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         "reviews",
         "total_duration_ms",
         "last_interaction_ts",
+        "latest_event_time",
+        "latest_bronze_partition",
+        "latest_bronze_offset",
         "customer_sk",
         "product_sk",
         "processed_at",

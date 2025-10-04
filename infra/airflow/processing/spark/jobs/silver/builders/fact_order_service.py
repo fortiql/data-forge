@@ -20,8 +20,8 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
         F.col("payload.currency").alias("order_currency"),
         F.to_timestamp("payload.ts").alias("order_ts"),
         "event_time",
-        "partition",
-        "offset",
+        F.col("partition").alias("bronze_partition"),
+        F.col("offset").alias("bronze_offset"),
     )
 
     payments = parse_bronze_topic(raw_events, "payments.v1").select(
@@ -94,8 +94,8 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
         "shipment_eta_days",
         "shipment_ts",
         "event_time",
-        "partition",
-        "offset",
+        "bronze_partition",
+        "bronze_offset",
         "user_id",
         "product_id",
         "customer_sk",

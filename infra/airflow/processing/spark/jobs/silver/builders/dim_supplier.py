@@ -5,33 +5,62 @@ from __future__ import annotations
 from pyspark.sql import DataFrame, SparkSession, functions as F
 from pyspark.sql.window import Window
 
-from silver.common import parse_cdc_table, surrogate_key, unix_ms_to_ts
+from silver.common import parse_cdc_table, scd2_from_events, surrogate_key, unix_ms_to_ts
 
 
 def build_dim_supplier(spark: SparkSession, _: DataFrame | None) -> DataFrame:
-    suppliers = parse_cdc_table(spark, "iceberg.bronze.demo_public_suppliers").select(
+    # Parse supplier changes from CDC stream  
+    suppliers = parse_cdc_table(spark, "iceberg.bronze.demo_public_suppliers").filter(
+        F.col("payload").isNotNull() & F.col("payload.after").isNotNull()
+    ).select(
         F.col("payload.after.supplier_id").alias("supplier_id"),
         F.col("payload.after.name").alias("name"),
         F.col("payload.after.country").alias("country"),
         F.col("payload.after.rating").alias("rating_raw"),
-        unix_ms_to_ts(F.col("payload.ts_ms")).alias("valid_from"),
-    )
+        unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+        F.col("partition").alias("bronze_partition"),
+        F.col("offset").alias("bronze_offset"),
+    ).filter(F.col("supplier_id").isNotNull())
 
+    # Convert rating to proper data type
     suppliers = suppliers.withColumn("rating", F.col("rating_raw").cast("double")).drop("rating_raw")
 
-    latest = suppliers.withColumn(
-        "rn", F.row_number().over(Window.partitionBy("supplier_id").orderBy(F.desc("valid_from")))
-    ).filter(F.col("rn") == 1)
+    # Apply SCD Type 2 logic to track supplier changes over time
+    scd2_suppliers = scd2_from_events(
+        suppliers,
+        key_cols=["supplier_id"],
+        ordering_cols=["change_ts", "bronze_offset"],
+        state_cols=["name", "country", "rating"]
+    )
 
-    return latest.drop("rn").select(
-        surrogate_key(F.col("supplier_id")).alias("supplier_sk"),
+    # Add dimension attributes and rename change_ts to valid_from for clarity
+    dimensional = scd2_suppliers.withColumn(
+        "valid_from", F.col("change_ts")
+    ).withColumn(
+        "is_current",
+        F.col("valid_to") == F.lit("2999-12-31 23:59:59").cast("timestamp")
+    ).withColumn(
+        "processed_at", F.current_timestamp()
+    )
+
+    # Generate surrogate key using business key + valid_from + bronze_offset for deterministic uniqueness
+    return dimensional.withColumn(
+        "supplier_sk", surrogate_key(
+            F.col("supplier_id"), 
+            F.col("valid_from"),
+            F.col("bronze_offset")
+        )
+    ).select(
+        "supplier_sk",
         F.col("supplier_id").alias("supplier_nk"),
         "supplier_id",
         "name",
         "country",
         "rating",
         "valid_from",
-        F.lit("2999-12-31 23:59:59").cast("timestamp").alias("valid_to"),
-        F.lit(True).alias("is_current"),
-        F.current_timestamp().alias("processed_at"),
+        "valid_to",
+        "is_current",
+        "bronze_partition",
+        "bronze_offset",
+        "processed_at",
     )

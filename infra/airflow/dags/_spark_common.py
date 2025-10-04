@@ -1,4 +1,10 @@
-"""Shared utilities for Airflow DAGs that submit Spark jobs."""
+"""Shared utilities for Airflo    # Resource Configuration
+    "spark.executor.instances": "2",
+    "spark.executor.cores": "1", 
+    "spark.executor.memory": "1g",
+    "spark.executor.memoryFraction": "0.8",
+    "spark.driver.memory": "1g",
+    "spark.driver.maxResultSize": "512m",that submit Spark jobs."""
 
 from __future__ import annotations
 
@@ -29,7 +35,7 @@ _BASE_CONF = {
     "spark.master": "spark://spark-master:7077",
     "spark.submit.deployMode": "client",
     # Resource Configuration
-    "spark.executor.instances": "1",
+    "spark.executor.instances": "2",
     "spark.executor.cores": "1", 
     "spark.executor.memory": "512m",
     "spark.executor.memoryFraction": "0.8",
@@ -58,6 +64,11 @@ _BASE_CONF = {
     "spark.dataforge.kafka.bootstrap": "kafka:9092",
     "spark.dataforge.schema.registry": "http://schema-registry:8081",
     "spark.jars": ",".join(_EXTRA_JARS),
+    # Additional resource and stability configuration
+    "spark.sql.execution.arrow.pyspark.enabled": "true",
+    "spark.sql.adaptive.skewJoin.enabled": "true",
+    "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+    "spark.kryoserializer.buffer.max": "256m",
 }
 
 
@@ -84,6 +95,8 @@ def spark_env_vars() -> dict[str, str]:
         "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minio"),
         "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minio123"),
         "S3_ENDPOINT": os.getenv("S3_ENDPOINT", os.getenv("MINIO_ENDPOINT", "minio:9000")),
+        "SPARK_HOME": os.getenv("SPARK_HOME", "/opt/spark"),
+        "SPARK_JARS_DIR": os.getenv("SPARK_JARS_DIR", "/opt/spark/jars"),
     }
 
 

@@ -24,6 +24,7 @@ x-airflow-common: &airflow-common
     S3_ENDPOINT: ${S3_ENDPOINT:-minio:9000}
     SPARK_HOME: /opt/spark
     SPARK_JARS_DIR: /opt/spark/jars
+    AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT: "true"
   volumes:
     - ./infra/airflow/dags:/opt/airflow/dags
     - ./infra/airflow/logs:/opt/airflow/logs
@@ -244,6 +245,7 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
     ports:
       - "7077:7077"
       - "8088:8080"
@@ -287,6 +289,7 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
     ports:
       - "8091:8091"
     extra_hosts:
@@ -324,6 +327,7 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
     ports:
       - "8092:8092"
     extra_hosts:

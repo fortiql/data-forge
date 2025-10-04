@@ -27,63 +27,182 @@ AGG_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_events_kafka_stream.py")
 TOPIC_APPLICATION = os.path.join(SPARK_JOB_BASE, "bronze_cdc_stream.py")
 SPARK_PY_FILES = spark_utils_py_files()
 
-DEFAULT_BATCH_SIZE = 5000
-DEFAULT_STARTING_OFFSETS = "latest"
-DEFAULT_EXPIRE_DAYS = "7d"
+DEFAULT_CONFIG = {
+    "batch_size": 5000,
+    "starting_offsets": "earliest",
+    "expire_days": "7d",
+}
 
-CDC_STREAMS = [
-    {
+BRONZE_STREAMS = {
+    "raw_events": {
+        "type": "multi_topic",
+        "topics": [
+            "orders.v1",
+            "payments.v1", 
+            "shipments.v1",
+            "inventory-changes.v1",
+            "customer-interactions.v1",
+        ],
+        "table": "iceberg.bronze.raw_events",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
+        "application": AGG_APPLICATION,
+        "batch_size": 50000,
+        "starting_offsets": "latest",
+        "expire_days": "7d",
+    },
+    "cdc_users": {
+        "type": "single_topic",
         "name": "users",
         "topic": "demo.public.users",
         "table": "iceberg.bronze.demo_public_users",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_users",
+        "application": TOPIC_APPLICATION,
     },
-    {
+    "cdc_products": {
+        "type": "single_topic",
         "name": "products",
-        "topic": "demo.public.products",
+        "topic": "demo.public.products", 
         "table": "iceberg.bronze.demo_public_products",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_products",
+        "application": TOPIC_APPLICATION,
     },
-    {
+    "cdc_inventory": {
+        "type": "single_topic",
         "name": "inventory",
         "topic": "demo.public.inventory",
         "table": "iceberg.bronze.demo_public_inventory",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_inventory",
+        "application": TOPIC_APPLICATION,
     },
-    {
+    "cdc_warehouse_inventory": {
+        "type": "single_topic",
         "name": "warehouse_inventory",
         "topic": "demo.public.warehouse_inventory",
         "table": "iceberg.bronze.demo_public_warehouse_inventory",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_warehouse_inventory",
+        "application": TOPIC_APPLICATION,
     },
-    {
+    "cdc_suppliers": {
+        "type": "single_topic",
         "name": "suppliers",
         "topic": "demo.public.suppliers",
         "table": "iceberg.bronze.demo_public_suppliers",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_suppliers",
+        "application": TOPIC_APPLICATION,
     },
-    {
+    "cdc_customer_segments": {
+        "type": "single_topic", 
         "name": "customer_segments",
         "topic": "demo.public.customer_segments",
         "table": "iceberg.bronze.demo_public_customer_segments",
         "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_customer_segments",
+        "application": TOPIC_APPLICATION,
     },
-]
-
-DEFAULT_PARAMS = {
-    "topics": [
-        "orders.v1",
-        "payments.v1",
-        "shipments.v1",
-        "inventory-changes.v1",
-        "customer-interactions.v1",
-    ],
-    "batch_size": 5000,
-    "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/raw_events",
-    "starting_offsets": "latest",
-    "table": "iceberg.bronze.raw_events",
-    "expire_days": "7d",
+    "cdc_warehouses": {
+        "type": "single_topic",
+        "name": "warehouses", 
+        "topic": "demo.public.warehouses",
+        "table": "iceberg.bronze.demo_public_warehouses",
+        "checkpoint": "s3a://checkpoints/spark/iceberg/bronze/cdc/demo_public_warehouses",
+        "application": TOPIC_APPLICATION,
+    },
 }
+
+# Legacy DEFAULT_PARAMS for backward compatibility with DAG params
+DEFAULT_PARAMS = BRONZE_STREAMS["raw_events"].copy()
+DEFAULT_PARAMS["topics"] = DEFAULT_PARAMS.pop("topics")  # Keep topics as list for template compatibility
+
+
+def create_stream_tasks(stream_key, stream_config, dag):
+    """
+    Factory function to create ingestion and maintenance tasks for a stream.
+    
+    Args:
+        stream_key: Unique identifier for the stream
+        stream_config: Stream configuration dictionary
+        dag: Airflow DAG instance
+        
+    Returns:
+        Tuple of (ingest_task, maintenance_task)
+    """
+    # Apply global defaults
+    config = {**DEFAULT_CONFIG, **stream_config}
+    
+    if config["type"] == "multi_topic":
+        # Multi-topic aggregation stream
+        task_id = "bounded_ingest"
+        maintenance_task_id = "iceberg_maintenance_bronze_raw_events"
+        
+        # Build application args for multi-topic stream
+        application_args = [
+            "--topics",
+            "{{ (dag_run.conf.topics if dag_run and dag_run.conf and dag_run.conf.topics is not none else params.topics) | join(',') }}",
+            "--batch-size", 
+            "{{ dag_run.conf.batch_size if dag_run and dag_run.conf and dag_run.conf.batch_size is not none else params.batch_size }}",
+            "--checkpoint",
+            "{{ dag_run.conf.checkpoint if dag_run and dag_run.conf and dag_run.conf.checkpoint is not none else params.checkpoint }}",
+            "--starting-offsets",
+            "{{ dag_run.conf.starting_offsets if dag_run and dag_run.conf and dag_run.conf.starting_offsets is not none else params.starting_offsets }}",
+            "--table",
+            "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
+        ]
+        
+        # Dynamic table reference for templating
+        table_ref = "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}"
+        expire_days_ref = "{{ dag_run.conf.expire_days if dag_run and dag_run.conf and dag_run.conf.expire_days is not none else params.expire_days }}"
+        
+    elif config["type"] == "single_topic":
+        # Single-topic CDC stream
+        name = config["name"]
+        task_id = f"ingest_{name}"
+        maintenance_task_id = f"iceberg_maintenance_{name}"
+        
+        # Build application args for single-topic stream
+        application_args = [
+            "--topic", config["topic"],
+            "--table", config["table"],
+            "--checkpoint", config["checkpoint"],
+            "--batch-size", str(config["batch_size"]),
+            "--starting-offsets", config["starting_offsets"],
+        ]
+        
+        # Static table references
+        table_ref = config["table"]
+        expire_days_ref = config["expire_days"]
+        
+    else:
+        raise ValueError(f"Unknown stream type: {config['type']}")
+    
+    # Create ingestion task
+    ingest_task = SparkSubmitOperator(
+        task_id=task_id,
+        conn_id="spark_default",
+        application=config["application"],
+        py_files=SPARK_PY_FILES,
+        packages=PACKAGES,
+        env_vars=ENV_VARS,
+        conf=BASE_CONF,
+        application_args=application_args,
+        verbose=True,
+        outlets=[iceberg_dataset(config["table"])],
+        dag=dag,
+    )
+    
+    # Create maintenance task  
+    maintenance_task = PythonOperator(
+        task_id=maintenance_task_id,
+        python_callable=iceberg_maintenance,
+        op_kwargs={
+            "table": table_ref,
+            "expire_days": expire_days_ref,
+        },
+        dag=dag,
+    )
+    
+    # Set up dependency
+    ingest_task >> maintenance_task
+    
+    return ingest_task, maintenance_task
 
 
 with DAG(
@@ -103,75 +222,6 @@ with DAG(
     params=DEFAULT_PARAMS,
     tags=["streaming", "cdc", "iceberg"],
 ) as dag:
-    bounded_ingest = SparkSubmitOperator(
-        task_id="bounded_ingest",
-        conn_id="spark_default",
-        application=AGG_APPLICATION,
-        py_files=SPARK_PY_FILES,
-        packages=PACKAGES,
-        env_vars=ENV_VARS,
-        conf=BASE_CONF,
-        application_args=[
-            "--topics",
-            "{{ (dag_run.conf.topics if dag_run and dag_run.conf and dag_run.conf.topics is not none else params.topics) | join(',') }}",
-            "--batch-size",
-            "{{ dag_run.conf.batch_size if dag_run and dag_run.conf and dag_run.conf.batch_size is not none else params.batch_size }}",
-            "--checkpoint",
-            "{{ dag_run.conf.checkpoint if dag_run and dag_run.conf and dag_run.conf.checkpoint is not none else params.checkpoint }}",
-            "--starting-offsets",
-            "{{ dag_run.conf.starting_offsets if dag_run and dag_run.conf and dag_run.conf.starting_offsets is not none else params.starting_offsets }}",
-            "--table",
-            "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
-        ],
-        verbose=True,
-        outlets=[iceberg_dataset("iceberg.bronze.raw_events")],
-    )
-
-    bounded_maintenance = PythonOperator(
-        task_id="iceberg_maintenance_bronze_raw_events",
-        python_callable=iceberg_maintenance,
-        op_kwargs={
-            "table": "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
-            "expire_days": "{{ dag_run.conf.expire_days if dag_run and dag_run.conf and dag_run.conf.expire_days is not none else params.expire_days }}",
-        },
-    )
-
-    bounded_ingest >> bounded_maintenance
-
-    for stream in CDC_STREAMS:
-        application_args = [
-            "--topic",
-            stream["topic"],
-            "--table",
-            stream["table"],
-            "--checkpoint",
-            stream["checkpoint"],
-            "--batch-size",
-            str(stream.get("batch_size", DEFAULT_BATCH_SIZE)),
-            "--starting-offsets",
-            stream.get("starting_offsets", DEFAULT_STARTING_OFFSETS),
-        ]
-
-        ingest = SparkSubmitOperator(
-            task_id=f"ingest_{stream['name']}",
-            conn_id="spark_default",
-            application=TOPIC_APPLICATION,
-            py_files=SPARK_PY_FILES,
-            packages=PACKAGES,
-            env_vars=ENV_VARS,
-            conf=BASE_CONF,
-            application_args=application_args,
-            verbose=True,
-            outlets=[iceberg_dataset(stream["table"])],
-        )
-
-        maintenance = PythonOperator(
-            task_id=f"iceberg_maintenance_{stream['name']}",
-            python_callable=iceberg_maintenance,
-            op_kwargs={
-                "table": stream["table"],
-                "expire_days": stream.get("expire_days", DEFAULT_EXPIRE_DAYS),
-            },
-        )
-
-        ingest >> maintenance
+    # Create all stream tasks using the factory function
+    for stream_key, stream_config in BRONZE_STREAMS.items():
+        create_stream_tasks(stream_key, stream_config, dag)
