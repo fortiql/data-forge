@@ -1,14 +1,15 @@
 """Silver Retail Service DAG
 
-Transforms Bronze raw events and CDC data into analytical Silver tables.
+Transforms Bronze raw events and CDC data into Kimball-compliant Silver tables.
 Follows Bronze layer patterns: factory functions, proper maintenance, 
 structured logging, and declarative configuration.
 
 This is the technical continuation from Bronze to Silver:
 - Bronze captures raw events with full provenance
-- Silver applies business rules and builds dimensional models
-- Each table builder handles specific analytical requirements
+- Silver applies business rules and builds dimensional star schema
+- Kimball-compliant design: surrogate keys, SCD2, conformed dimensions
 - Dependencies ensure dimensions complete before facts consume surrogate keys
+- Date dimension provides temporal context for all time-based analysis
 """
 
 import os
@@ -107,13 +108,15 @@ def create_silver_task(builder: TableBuilder, dag) -> tuple[SparkSubmitOperator,
 
 with DAG(
     dag_id="silver_retail_service",
-    description="Build Silver dimensions and facts from Bronze retail data",
+    description="Build Kimball-compliant Silver star schema from Bronze retail data",
     doc_md="""\
-        #### Silver Retail Service
-        - Each builder task transforms Bronze data into a Silver dimension or fact table.
-        - Dependencies ensure dimensions load before facts consume their surrogate keys.
-        - Maintenance runs OPTIMIZE, EXPIRE_SNAPSHOTS, and REMOVE_ORPHANS post-build.
-        - The DAG triggers when Bronze datasets update.
+        #### Silver Retail Service - Kimball Star Schema
+        - **Dimensions**: Customer, Product, Supplier, Warehouse, Date (SCD2 with surrogate keys)
+        - **Facts**: Order Service, Inventory Position, Customer Engagement (surrogate keys only)
+        - **Dependencies**: Date dimension loads first, then other dims, finally facts
+        - **Kimball Compliance**: Proper surrogate keys, no natural keys in facts, conformed dimensions
+        - **Maintenance**: OPTIMIZE, EXPIRE_SNAPSHOTS, and REMOVE_ORPHANS post-build
+        - **Trigger**: When Bronze datasets update
         """,
     start_date=None,
     schedule=TRIGGER_DATASETS,
@@ -132,12 +135,15 @@ with DAG(
         maintenance_tasks[builder.identifier] = maintenance_task
 
     # 🔗 Fact Dependencies: dimensions must complete before facts
+    # Note: dim_date has no dependencies and builds first
+    # Facts requiring temporal joins need dim_date for date_sk lookups
     fact_dependencies = {
-        "fact_order_service": ["dim_customer_profile", "dim_product_catalog"],
+        "fact_order_service": ["dim_date", "dim_customer_profile", "dim_product_catalog"],
         "fact_inventory_position": ["dim_product_catalog", "dim_warehouse"],
-        "fact_customer_engagement": ["dim_customer_profile", "dim_product_catalog"],
+        "fact_customer_engagement": ["dim_date", "dim_customer_profile", "dim_product_catalog"],
     }
 
+    # Wire up all dependencies
     for fact_identifier, deps in fact_dependencies.items():
         if fact_identifier not in build_tasks:
             continue

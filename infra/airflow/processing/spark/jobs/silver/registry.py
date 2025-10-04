@@ -9,6 +9,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 from silver.builders import (
     build_dim_customer_profile,
+    build_dim_date,
     build_dim_product_catalog,
     build_dim_supplier,
     build_dim_warehouse,
@@ -29,6 +30,13 @@ class TableBuilder:
 
 
 TABLE_BUILDERS: Sequence[TableBuilder] = (
+    # Dimensions (build first - no dependencies)
+    TableBuilder(
+        identifier="dim_date",
+        table="iceberg.silver.dim_date",
+        build_fn=build_dim_date,
+        primary_key=("date_sk",),
+    ),
     TableBuilder(
         identifier="dim_customer_profile",
         table="iceberg.silver.dim_customer_profile",
@@ -53,28 +61,29 @@ TABLE_BUILDERS: Sequence[TableBuilder] = (
         build_fn=build_dim_warehouse,
         primary_key=("warehouse_sk",),
     ),
+    # Facts (build after dimensions - have dependencies)
     TableBuilder(
         identifier="fact_order_service",
         table="iceberg.silver.fact_order_service",
         build_fn=build_fact_order_service,
-        primary_key=("order_id",),
-        partition_cols=("order_date",),
+        primary_key=("order_sk",),
+        partition_cols=("date_sk",),
         requires_raw_events=True,
     ),
     TableBuilder(
         identifier="fact_inventory_position",
         table="iceberg.silver.fact_inventory_position",
         build_fn=build_fact_inventory_position,
-        primary_key=("warehouse_id", "product_id"),
-        partition_cols=("warehouse_id",),
+        primary_key=("inventory_sk",),
+        partition_cols=("warehouse_sk",),
         requires_raw_events=True,
     ),
     TableBuilder(
         identifier="fact_customer_engagement",
         table="iceberg.silver.fact_customer_engagement",
         build_fn=build_fact_customer_engagement,
-        primary_key=("user_id", "product_id", "event_date"),
-        partition_cols=("event_date",),
+        primary_key=("engagement_sk",),
+        partition_cols=("date_sk",),
         requires_raw_events=True,
     ),
 )
