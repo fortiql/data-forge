@@ -12,13 +12,31 @@ def build_dim_supplier(spark: SparkSession, _: DataFrame | None) -> DataFrame:
     suppliers_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_suppliers")
     
     suppliers = (suppliers_raw
-        .filter(F.col("payload.after").isNotNull())
         .select(
-            F.col("payload.after.supplier_id").alias("supplier_id"),
-            F.col("payload.after.name").alias("name"),
-            F.col("payload.after.country").alias("country"),
-            F.col("payload.after.rating").cast("double").alias("rating"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.supplier_id"),
+                F.get_json_object("json_payload", "$.before.supplier_id"),
+                F.get_json_object("json_payload", "$.supplier_id")
+            ).alias("supplier_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.name"),
+                F.get_json_object("json_payload", "$.before.name"),
+                F.get_json_object("json_payload", "$.name")
+            ).alias("name"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.country"),
+                F.get_json_object("json_payload", "$.before.country"),
+                F.get_json_object("json_payload", "$.country")
+            ).alias("country"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.rating"),
+                F.get_json_object("json_payload", "$.before.rating"),
+                F.get_json_object("json_payload", "$.rating")
+            ).cast("double").alias("rating"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         )

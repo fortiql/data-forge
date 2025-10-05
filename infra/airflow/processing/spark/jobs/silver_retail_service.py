@@ -39,26 +39,38 @@ def enforce_primary_key(df: DataFrame, keys: Sequence[str], table_name: str) -> 
         raise ValueError(f"Primary key violation in {table_name}: {dup_count} duplicates")
 
 
-def materialise_tables(spark: SparkSession, selected: Iterable[str]) -> None:
-    """Build selected Silver tables in dependency order."""
-    order = [builder.identifier for builder in TABLE_BUILDERS]
-    selected_ordered = [identifier for identifier in order if identifier in selected]
-    
-    logger.info("Building %d tables: %s", len(selected_ordered), ", ".join(selected_ordered))
-
+def materialise_tables(
+    spark: SparkSession, 
+    builders: Iterable[TableBuilder], 
     raw_events: DataFrame | None = None
-
-    for identifier in selected_ordered:
-        builder = BUILDER_MAP[identifier]
-        logger.info("Building %s", builder.table)
+) -> None:
+    """Create or refresh Silver dimensional tables."""
+    ensure_schema(spark, "iceberg.silver")
+    
+    for builder in builders:
+        logger.info("Building %s...", builder.identifier)
         
-        # Load raw_events once for all fact builders
-        if builder.requires_raw_events and raw_events is None:
-            raw_events = spark.table("iceberg.bronze.raw_events")
-
+        # Build the dimensional/fact table
         df = builder.build_fn(spark, raw_events)
-        enforce_primary_key(df, builder.primary_key, builder.table)
+        
+        # Cache small dimension tables to improve join performance
+        if "dim_" in builder.identifier and builder.identifier != "dim_customer_profile":
+            df.cache()
+            logger.info("Cached small dimension: %s", builder.identifier)
+        
+        # Enforce primary key constraints
+        if builder.primary_key:
+            enforce_primary_key(df, builder.primary_key, builder.identifier)
+        
+        # Write to Iceberg
         write_snapshot(df, builder)
+        
+        # Unpersist cached DataFrames to free memory
+        if df.is_cached:
+            df.unpersist()
+            logger.info("Unpersisted cache for: %s", builder.identifier)
+        
+        logger.info("Completed %s", builder.identifier)
 
 
 def parse_args() -> argparse.Namespace:
@@ -98,10 +110,24 @@ def main() -> None:
 
     spark = build_spark(app_name=app_name)
     spark.sparkContext.setLogLevel("WARN")
+    
+    # Configure Spark for memory efficiency
+    spark.conf.set("spark.sql.adaptive.enabled", "true")
+    spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
+    spark.conf.set("spark.sql.adaptive.advisoryPartitionSizeInBytes", "128MB")
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+    
     ensure_schema(spark, "iceberg.silver")
 
     try:
-        materialise_tables(spark, selected)
+        # Convert selected table identifiers to TableBuilder objects
+        selected_builders = [BUILDER_MAP[identifier] for identifier in selected]
+        
+        # Determine if any builder requires raw_events
+        requires_events = any(builder.requires_raw_events for builder in selected_builders)
+        raw_events = spark.table("iceberg.bronze.raw_events") if requires_events else None
+        
+        materialise_tables(spark, selected_builders, raw_events)
         logger.info("Silver job completed successfully")               
     except Exception as e:
         logger.error("Silver job failed: %s", str(e))

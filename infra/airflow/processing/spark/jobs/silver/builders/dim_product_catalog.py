@@ -12,13 +12,31 @@ def build_dim_product_catalog(spark: SparkSession, _: DataFrame | None) -> DataF
     products_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_products")
     
     products = (products_raw
-        .filter(F.col("payload.after").isNotNull())
         .select(
-            F.col("payload.after.product_id").alias("product_id"),
-            F.col("payload.after.title").alias("title"),
-            F.col("payload.after.category").alias("category"),
-            F.col("payload.after.price_usd").cast("double").alias("price_usd"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.product_id"),
+                F.get_json_object("json_payload", "$.before.product_id"),
+                F.get_json_object("json_payload", "$.product_id")
+            ).alias("product_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.title"),
+                F.get_json_object("json_payload", "$.before.title"),
+                F.get_json_object("json_payload", "$.title")
+            ).alias("title"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.category"),
+                F.get_json_object("json_payload", "$.before.category"),
+                F.get_json_object("json_payload", "$.category")
+            ).alias("category"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.price_usd"),
+                F.get_json_object("json_payload", "$.before.price_usd"),
+                F.get_json_object("json_payload", "$.price_usd")
+            ).cast("double").alias("price_usd"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         )

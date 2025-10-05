@@ -16,9 +16,21 @@ LOG = logging.getLogger(__name__)
 
 
 def build_spark(app_name: str) -> SparkSession:
-    """Create or reuse a Spark session with the given application name."""
-
-    return SparkSession.builder.appName(app_name).getOrCreate()
+    """Create or reuse a Spark session with the given application name and memory optimizations."""
+    
+    builder = (SparkSession.builder
+        .appName(app_name)
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") 
+        .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "128MB")
+        .config("spark.sql.adaptive.skewJoin.enabled", "true")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .config("spark.sql.execution.arrow.maxRecordsPerBatch", "10000")
+        .config("spark.sql.shuffle.partitions", "400")
+        .config("spark.sql.autoBroadcastJoinThreshold", "10MB")
+    )
+    
+    return builder.getOrCreate()
 
 
 def _json_default(obj):

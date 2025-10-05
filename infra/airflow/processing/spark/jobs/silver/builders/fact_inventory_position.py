@@ -12,17 +12,17 @@ def build_fact_inventory_position(spark: SparkSession, raw_events: DataFrame | N
     if raw_events is None:
         raise ValueError("raw_events dataframe is required for fact_inventory_position")
 
-    # Extract inventory change events
+    # Extract inventory change events from json_payload
     changes = (parse_bronze_topic(raw_events, "inventory-changes.v1")
         .select(
-            F.col("payload.warehouse_id").alias("warehouse_id"),
-            F.col("payload.product_id").alias("product_id"),
-            F.col("payload.change_type").alias("change_type"),
-            F.col("payload.quantity_delta").alias("quantity_delta"),
-            F.col("payload.new_qty").alias("new_qty"),
-            F.col("payload.reason").alias("reason"),
-            F.col("payload.order_id").alias("order_id"),
-            F.to_timestamp("payload.ts").alias("change_ts"),
+            F.get_json_object("json_payload", "$.warehouse_id").alias("warehouse_id"),
+            F.get_json_object("json_payload", "$.product_id").alias("product_id"),
+            F.get_json_object("json_payload", "$.change_type").alias("change_type"),
+            F.get_json_object("json_payload", "$.quantity_delta").cast("int").alias("quantity_delta"),
+            F.get_json_object("json_payload", "$.new_qty").cast("int").alias("new_qty"),
+            F.get_json_object("json_payload", "$.reason").alias("reason"),
+            F.get_json_object("json_payload", "$.order_id").alias("order_id"),
+            F.to_timestamp(F.get_json_object("json_payload", "$.ts")).alias("change_ts"),
             "event_time",
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),

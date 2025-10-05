@@ -37,13 +37,10 @@ _BASE_CONF = {
     # Resource Configuration
     "spark.executor.instances": "2",
     "spark.executor.cores": "1", 
-    "spark.executor.memory": "512m",
+    "spark.executor.memory": "1G",
     "spark.executor.memoryFraction": "0.8",
-    "spark.driver.memory": "512m",
-    "spark.driver.maxResultSize": "256m",
     "spark.sql.adaptive.enabled": "true",
     "spark.sql.adaptive.coalescePartitions.enabled": "true",
-    "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
     # Storage Configuration
     "spark.sql.warehouse.dir": "s3a://iceberg/warehouse",
     "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
@@ -67,7 +64,6 @@ _BASE_CONF = {
     # Additional resource and stability configuration
     "spark.sql.execution.arrow.pyspark.enabled": "true",
     "spark.sql.adaptive.skewJoin.enabled": "true",
-    "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
     "spark.kryoserializer.buffer.max": "256m",
 }
 

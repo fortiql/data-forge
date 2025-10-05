@@ -28,13 +28,13 @@ def with_payload(df: DataFrame) -> DataFrame:
 
 
 def parse_bronze_topic(raw_events: DataFrame, topic: str) -> DataFrame:
-    """Filter Bronze raw events by topic and decode the payload."""
-    return with_payload(raw_events.filter(F.col("event_source") == topic))
+    """Filter Bronze raw events by topic - no payload parsing for memory efficiency."""
+    return raw_events.filter(F.col("event_source") == topic)
 
 
 def parse_cdc_table(spark: SparkSession, table: str) -> DataFrame:
-    """Read a Bronze CDC Iceberg table and decode its payload."""
-    return with_payload(spark.table(table))
+    """Read a Bronze CDC Iceberg table - no payload parsing for memory efficiency."""
+    return spark.table(table)
 
 
 def unix_ms_to_ts(col: F.Column) -> F.Column:

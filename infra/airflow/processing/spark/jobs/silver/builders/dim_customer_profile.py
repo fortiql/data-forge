@@ -12,21 +12,34 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
     users_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_users")
     segments_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_customer_segments")
 
-    # Extract user fields with fallback to before/after pattern
-    def extract_field(field_name: str) -> F.Column:
-        return F.coalesce(
-            F.col(f"payload.after.{field_name}"),
-            F.col(f"payload.before.{field_name}"),
-            F.col(f"payload.{field_name}")
-        )
-
+    # Extract from json_payload column in bronze tables
     users = (users_raw
         .select(
-            extract_field("user_id").alias("user_id"),
-            extract_field("email").alias("email"),
-            extract_field("country").alias("country"),
-            F.to_timestamp(extract_field("created_at")).alias("created_at"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            # Extract from JSON payload column
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.user_id"),
+                F.get_json_object("json_payload", "$.before.user_id"),
+                F.get_json_object("json_payload", "$.user_id")
+            ).alias("user_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.email"),
+                F.get_json_object("json_payload", "$.before.email"),
+                F.get_json_object("json_payload", "$.email")
+            ).alias("email"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.country"),
+                F.get_json_object("json_payload", "$.before.country"),
+                F.get_json_object("json_payload", "$.country")
+            ).alias("country"),
+            F.to_timestamp(F.coalesce(
+                F.get_json_object("json_payload", "$.after.created_at"),
+                F.get_json_object("json_payload", "$.before.created_at"),
+                F.get_json_object("json_payload", "$.created_at")
+            )).alias("created_at"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             "event_time",
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
@@ -37,10 +50,30 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
 
     segments = (segments_raw
         .select(
-            extract_field("user_id").alias("user_id"),
-            extract_field("segment").alias("segment"),
-            extract_field("lifetime_value").cast("double").alias("lifetime_value"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.user_id"),
+                F.get_json_object("json_payload", "$.before.user_id"),
+                F.get_json_object("json_payload", "$.user_id")
+            ).alias("user_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.segment"),
+                F.get_json_object("json_payload", "$.before.segment"),
+                F.get_json_object("json_payload", "$.segment")
+            ).alias("segment"),
+            F.to_timestamp(F.coalesce(
+                F.get_json_object("json_payload", "$.after.segment_created_at"),
+                F.get_json_object("json_payload", "$.before.segment_created_at"),
+                F.get_json_object("json_payload", "$.segment_created_at")
+            )).alias("segment_created_at"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.lifetime_value"),
+                F.get_json_object("json_payload", "$.before.lifetime_value"),
+                F.get_json_object("json_payload", "$.lifetime_value")
+            ).cast("double").alias("lifetime_value"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             "event_time",
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
@@ -82,9 +115,10 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
         )
     )
 
-    # Forward-fill missing values using window functions
-    fill_window = Window.partitionBy("user_id").orderBy("change_ts", "bronze_offset")
+    # Forward-fill missing values using window functions with memory optimization
+    fill_window = Window.partitionBy("user_id").orderBy("change_ts", "bronze_offset").rowsBetween(Window.unboundedPreceding, Window.currentRow)
     filled = (consolidated
+        .repartition(200, "user_id")  # Repartition for better memory distribution
         .withColumn("email", F.last("email", ignorenulls=True).over(fill_window))
         .withColumn("country", F.last("country", ignorenulls=True).over(fill_window))
         .withColumn("created_at", F.last("created_at", ignorenulls=True).over(fill_window))

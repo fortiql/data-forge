@@ -10,14 +10,33 @@ from silver.common import parse_cdc_table, scd2_from_events, surrogate_key, unix
 
 def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
     # Parse warehouse metadata
-    warehouses = (parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouses")
-        .filter(F.col("payload.after").isNotNull())
+    warehouses_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouses")
+    warehouses = (warehouses_raw
         .select(
-            F.col("payload.after.warehouse_id").alias("warehouse_id"),
-            F.col("payload.after.name").alias("name"),
-            F.col("payload.after.region").alias("region"),
-            F.col("payload.after.country").alias("country"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.warehouse_id"),
+                F.get_json_object("json_payload", "$.before.warehouse_id"),
+                F.get_json_object("json_payload", "$.warehouse_id")
+            ).alias("warehouse_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.name"),
+                F.get_json_object("json_payload", "$.before.name"),
+                F.get_json_object("json_payload", "$.name")
+            ).alias("name"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.region"),
+                F.get_json_object("json_payload", "$.before.region"),
+                F.get_json_object("json_payload", "$.region")
+            ).alias("region"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.country"),
+                F.get_json_object("json_payload", "$.before.country"),
+                F.get_json_object("json_payload", "$.country")
+            ).alias("country"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         )
@@ -25,13 +44,28 @@ def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
     )
 
     # Parse warehouse inventory changes
-    warehouse_inv = (parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouse_inventory")
-        .filter(F.col("payload.after").isNotNull())
+    warehouse_inv_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouse_inventory")
+    warehouse_inv = (warehouse_inv_raw
         .select(
-            F.col("payload.after.warehouse_id").alias("warehouse_id"),
-            F.col("payload.after.qty").alias("qty"),
-            F.col("payload.after.reserved_qty").alias("reserved_qty"),
-            unix_ms_to_ts(F.col("payload.ts_ms")).alias("change_ts"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.warehouse_id"),
+                F.get_json_object("json_payload", "$.before.warehouse_id"),
+                F.get_json_object("json_payload", "$.warehouse_id")
+            ).alias("warehouse_id"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.qty"),
+                F.get_json_object("json_payload", "$.before.qty"),
+                F.get_json_object("json_payload", "$.qty")
+            ).alias("qty"),
+            F.coalesce(
+                F.get_json_object("json_payload", "$.after.reserved_qty"),
+                F.get_json_object("json_payload", "$.before.reserved_qty"),
+                F.get_json_object("json_payload", "$.reserved_qty")
+            ).alias("reserved_qty"),
+            F.coalesce(
+                unix_ms_to_ts(F.get_json_object("json_payload", "$.ts_ms").cast("long")),
+                F.col("event_time")
+            ).alias("change_ts"),
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         )

@@ -18,9 +18,8 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
         
         extracted = events.select(
             *[F.get_json_object("json_payload", f"$.{field}").alias(alias) 
-              if alias != "order_id" else F.get_json_object("json_payload", f"$.{field}").alias(alias)
               for field, alias in extract_fields.items()],
-            "event_time",
+            F.col("event_time"),
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         ).filter(F.col("order_id").isNotNull())
@@ -65,10 +64,29 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
     }).withColumn("shipment_eta_days", F.col("shipment_eta_days").cast("int")) \
      .withColumn("shipment_ts", F.to_timestamp("shipment_ts"))
 
-    # Join all events together
-    fact = (orders
-        .join(payments, "order_id", "left")
-        .join(shipments, "order_id", "left")
+    # Join all events together - explicitly select columns to avoid ambiguity
+    fact = (orders.alias("o")
+        .join(payments.alias("p"), F.col("o.order_id") == F.col("p.order_id"), "left")
+        .join(shipments.alias("s"), F.col("o.order_id") == F.col("s.order_id"), "left")
+        .select(
+            F.col("o.order_id"),
+            F.col("o.user_id"),
+            F.col("o.product_id"),
+            F.col("o.order_amount"),
+            F.col("o.order_currency"),
+            F.col("o.order_ts"),
+            F.col("o.event_time"),
+            F.col("o.bronze_partition"),
+            F.col("o.bronze_offset"),
+            F.col("p.payment_id"),
+            F.col("p.payment_method"),
+            F.col("p.payment_status"),
+            F.col("p.payment_ts"),
+            F.col("s.shipment_id"),
+            F.col("s.shipment_carrier"),
+            F.col("s.shipment_eta_days"),
+            F.col("s.shipment_ts"),
+        )
         .withColumn("order_ts", F.coalesce("order_ts", "event_time"))
         .withColumn("order_date", F.to_date("order_ts"))
     )

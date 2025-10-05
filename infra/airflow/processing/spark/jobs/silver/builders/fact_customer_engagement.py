@@ -11,24 +11,30 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
     if raw_events is None:
         raise ValueError("raw_events dataframe is required for fact_customer_engagement")
 
-    # Extract interaction events
+    # Extract interaction events from json_payload
     interactions = (parse_bronze_topic(raw_events, "customer-interactions.v1")
         .select(
-            F.col("payload.interaction_id").alias("interaction_id"),
-            F.col("payload.user_id").alias("user_id"),
-            F.col("payload.product_id").alias("product_id"),
-            F.col("payload.interaction_type").alias("interaction_type"),
-            F.col("payload.duration_ms").alias("duration_ms"),
-            F.to_timestamp("payload.ts").alias("interaction_ts"),
+            F.get_json_object("json_payload", "$.interaction_id").alias("interaction_id"),
+            F.get_json_object("json_payload", "$.user_id").alias("user_id"),
+            F.get_json_object("json_payload", "$.product_id").alias("product_id"),
+            F.get_json_object("json_payload", "$.interaction_type").alias("interaction_type"),
+            F.get_json_object("json_payload", "$.duration_ms").cast("long").alias("duration_ms"),
+            F.to_timestamp(F.get_json_object("json_payload", "$.ts")).alias("interaction_ts"),
             "event_time",
             F.col("partition").alias("bronze_partition"),
             F.col("offset").alias("bronze_offset"),
         )
+        .filter(
+            F.col("interaction_id").isNotNull() & 
+            F.col("user_id").isNotNull() & 
+            F.col("product_id").isNotNull()
+        )
         .withColumn("event_date", F.to_date("interaction_ts"))
     )
 
-    # Aggregate interactions by user, product, and date
+    # Aggregate interactions by user, product, and date with memory optimization
     aggregated = (interactions
+        .repartition(400, "user_id", "product_id")  # Increase partitions for better parallelism
         .groupBy("user_id", "product_id", "event_date")
         .agg(
             F.countDistinct("interaction_id").alias("interactions"),
@@ -43,6 +49,7 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         .withColumn("latest_bronze_offset", F.col("latest_context.bronze_offset"))
         .withColumn("latest_event_time", F.col("latest_context.event_time"))
         .drop("latest_context")
+        .coalesce(200)  # Reduce partitions after aggregation
     )
 
     # Lookup dimension keys
@@ -68,11 +75,18 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         .join(dates, aggregated.event_date == dates.date_key, "left")
         .withColumn("processed_at", F.current_timestamp())
         .drop(customers.user_id, products.product_id, dates.date_key)  # Remove duplicate columns
+        .distinct()  # Ensure no duplicates from joins
     )
 
-    # Generate fact surrogate key and return Kimball-compliant fact table
+    # Generate unique fact surrogate key using business keys plus context
     return (enriched_fact
-        .withColumn("engagement_sk", surrogate_key(F.col("customer_sk"), F.col("product_sk"), F.col("event_date")))
+        .filter(F.col("user_id").isNotNull() & F.col("product_id").isNotNull())  # Filter nulls
+        .withColumn("engagement_sk", surrogate_key(
+            F.col("user_id"), 
+            F.col("product_id"), 
+            F.col("event_date"),
+            F.col("latest_bronze_offset")  # Add offset for uniqueness
+        ))
         .select(
             "engagement_sk",      # Fact surrogate key
             "date_sk",            # Date dimension FK
