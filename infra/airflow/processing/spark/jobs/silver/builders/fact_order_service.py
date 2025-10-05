@@ -14,7 +14,7 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
 
     def extract_latest_by_topic(topic: str, extract_fields: dict) -> DataFrame:
         """Extract and get latest event by order_id for a given topic."""
-        events = parse_bronze_topic(raw_events, topic).filter(F.col("payload").isNotNull())
+        events = parse_bronze_topic(raw_events, topic).filter(F.col("json_payload").isNotNull())
         
         extracted = events.select(
             *[F.get_json_object("json_payload", f"$.{field}").alias(alias) 
