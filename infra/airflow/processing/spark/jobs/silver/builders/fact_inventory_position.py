@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pyspark.sql import DataFrame, SparkSession, functions as F
-from pyspark.sql.window import Window
 
 from silver.common import parse_bronze_topic, surrogate_key
 
@@ -12,7 +11,6 @@ def build_fact_inventory_position(spark: SparkSession, raw_events: DataFrame | N
     if raw_events is None:
         raise ValueError("raw_events dataframe is required for fact_inventory_position")
 
-    # Extract inventory change events from json_payload
     changes = (parse_bronze_topic(raw_events, "inventory-changes.v1")
         .select(
             F.get_json_object("json_payload", "$.warehouse_id").alias("warehouse_id"),
@@ -28,46 +26,67 @@ def build_fact_inventory_position(spark: SparkSession, raw_events: DataFrame | N
             F.col("offset").alias("bronze_offset"),
         )
         .filter(F.col("warehouse_id").isNotNull() & F.col("product_id").isNotNull())
+        .withColumn("change_ts", F.coalesce(F.col("change_ts"), F.col("event_time")))
+        .withColumn("event_date", F.to_date("change_ts"))
     )
 
-    # Get latest position per warehouse/product
-    latest = (changes
-        .withColumn("rn", F.row_number().over(
-            Window.partitionBy("warehouse_id", "product_id")
-                  .orderBy(F.desc("change_ts"), F.desc("bronze_offset"))))
-        .filter(F.col("rn") == 1)
-        .drop("rn")
+    warehouses = (spark.table("iceberg.silver.dim_warehouse")
+        .select("warehouse_sk", "warehouse_id", "valid_from", "valid_to")
+        .alias("w")
     )
 
-    # Lookup dimension keys
-    warehouses = spark.table("iceberg.silver.dim_warehouse").select("warehouse_sk", "warehouse_id")
     products = (spark.table("iceberg.silver.dim_product_catalog")
-        .where(F.col("is_current"))
-        .select("product_sk", "product_id")
+        .select("product_sk", "product_id", "valid_from", "valid_to")
+        .alias("p")
     )
 
-    # Join with dimensions and return Kimball-compliant fact table
-    enriched = (latest
-        .join(warehouses, latest.warehouse_id == warehouses.warehouse_id, "left")
-        .join(products, latest.product_id == products.product_id, "left")
-        .withColumn("processed_at", F.current_timestamp())
-        .withColumn("inventory_sk", surrogate_key(F.col("warehouse_sk"), F.col("product_sk"), F.col("change_ts")))
+    dates = (spark.table("iceberg.silver.dim_date")
+        .select("date_sk", "date_key")
+        .alias("d")
     )
-    
+
+    enriched = (changes.alias("c")
+        .join(
+            warehouses,
+            (F.col("c.warehouse_id") == F.col("w.warehouse_id"))
+            & (F.col("c.change_ts") >= F.col("w.valid_from"))
+            & (F.col("c.change_ts") < F.col("w.valid_to")),
+            "left",
+        )
+        .join(
+            products,
+            (F.col("c.product_id") == F.col("p.product_id"))
+            & (F.col("c.change_ts") >= F.col("p.valid_from"))
+            & (F.col("c.change_ts") < F.col("p.valid_to")),
+            "left",
+        )
+        .join(dates, F.col("c.event_date") == F.col("d.date_key"), "left")
+        .withColumn("processed_at", F.current_timestamp())
+        .withColumn(
+            "inventory_sk",
+            surrogate_key(
+                F.col("w.warehouse_sk"),
+                F.col("p.product_sk"),
+                F.col("c.change_ts"),
+                F.col("c.bronze_offset"),
+            ),
+        )
+    )
+
     return (enriched
         .select(
-            "inventory_sk",       # Fact surrogate key
-            "warehouse_sk",       # Warehouse dimension FK
-            "product_sk",         # Product dimension FK
-            "change_type",        # Descriptive attributes
-            "quantity_delta",     # Additive measure
-            "new_qty",            # Semi-additive measure (balance)
-            "reason",
-            "order_id",           # Degenerate dimension
-            "change_ts",          # Event timestamp
-            "bronze_partition",   # Audit fields (standardized naming)
-            "bronze_offset", 
+            "inventory_sk",
+            F.col("d.date_sk").alias("date_sk"),
+            F.col("w.warehouse_sk").alias("warehouse_sk"),
+            F.col("p.product_sk").alias("product_sk"),
+            F.col("c.change_type").alias("change_type"),
+            F.col("c.quantity_delta").alias("quantity_delta"),
+            F.col("c.new_qty").alias("new_qty"),
+            F.col("c.reason").alias("reason"),
+            F.col("c.order_id").alias("order_id"),
+            F.col("c.change_ts").alias("change_ts"),
+            F.col("c.bronze_partition").alias("bronze_partition"),
+            F.col("c.bronze_offset").alias("bronze_offset"),
             "processed_at",
         )
-        .dropDuplicates(["warehouse_sk", "product_sk"])  # Ensure no duplicates on business key
     )

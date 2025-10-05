@@ -9,21 +9,17 @@ from pyspark.sql.window import Window
 
 def with_payload(df: DataFrame) -> DataFrame:
     """Attach a parsed `payload` column derived from `json_payload`."""
-    sample = (
+    spark = df.sparkSession
+    sample_df = (
         df.select("json_payload")
         .where(F.col("json_payload").isNotNull())
         .limit(1)
-        .collect()
     )
-    
-    if not sample:
+
+    if sample_df.rdd.isEmpty():
         return df.withColumn("payload", F.lit(None).cast(T.StructType([])))
-    
-    spark = df.sparkSession
-    schema = spark.read.json(
-        spark.sparkContext.parallelize([sample[0]["json_payload"]])
-    ).schema
-    
+
+    schema = spark.read.json(sample_df.rdd.map(lambda row: row.json_payload)).schema
     return df.withColumn("payload", F.from_json("json_payload", schema))
 
 

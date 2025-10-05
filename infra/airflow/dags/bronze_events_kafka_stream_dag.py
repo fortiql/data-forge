@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from typing import Any
 
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
@@ -108,9 +109,33 @@ BRONZE_STREAMS = {
     },
 }
 
-# Legacy DEFAULT_PARAMS for backward compatibility with DAG params
-DEFAULT_PARAMS = BRONZE_STREAMS["raw_events"].copy()
-DEFAULT_PARAMS["topics"] = DEFAULT_PARAMS.pop("topics")  # Keep topics as list for template compatibility
+def build_default_params(streams: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Compose default DAG params for multi-topic and CDC streams."""
+
+    defaults: dict[str, Any] = {"streams": {}}
+
+    for key, conf in streams.items():
+        stream_defaults: dict[str, Any] = {
+            "table": conf["table"],
+            "checkpoint": conf["checkpoint"],
+            "batch_size": conf.get("batch_size", DEFAULT_CONFIG["batch_size"]),
+            "starting_offsets": conf.get("starting_offsets", DEFAULT_CONFIG["starting_offsets"]),
+            "expire_days": conf.get("expire_days", DEFAULT_CONFIG["expire_days"]),
+        }
+
+        if conf["type"] == "multi_topic":
+            stream_defaults["topics"] = list(conf.get("topics", []))
+        elif conf["type"] == "single_topic":
+            stream_defaults["topic"] = conf["topic"]
+        else:
+            raise ValueError(f"Unsupported stream type for defaults: {conf['type']}")
+
+        defaults["streams"][key] = stream_defaults
+    defaults.update(defaults["streams"]["raw_events"])
+    return defaults
+
+
+DEFAULT_PARAMS = build_default_params(BRONZE_STREAMS)
 
 
 def create_stream_tasks(stream_key, stream_config, dag):
@@ -125,15 +150,11 @@ def create_stream_tasks(stream_key, stream_config, dag):
     Returns:
         Tuple of (ingest_task, maintenance_task)
     """
-    # Apply global defaults
     config = {**DEFAULT_CONFIG, **stream_config}
     
     if config["type"] == "multi_topic":
-        # Multi-topic aggregation stream
         task_id = "bounded_ingest"
         maintenance_task_id = "iceberg_maintenance_bronze_raw_events"
-        
-        # Build application args for multi-topic stream
         application_args = [
             "--topics",
             "{{ (dag_run.conf.topics if dag_run and dag_run.conf and dag_run.conf.topics is not none else params.topics) | join(',') }}",
@@ -146,18 +167,13 @@ def create_stream_tasks(stream_key, stream_config, dag):
             "--table",
             "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}",
         ]
-        
-        # Dynamic table reference for templating
         table_ref = "{{ dag_run.conf.table if dag_run and dag_run.conf and dag_run.conf.table is not none else params.table }}"
         expire_days_ref = "{{ dag_run.conf.expire_days if dag_run and dag_run.conf and dag_run.conf.expire_days is not none else params.expire_days }}"
         
     elif config["type"] == "single_topic":
-        # Single-topic CDC stream
         name = config["name"]
         task_id = f"ingest_{name}"
         maintenance_task_id = f"iceberg_maintenance_{name}"
-        
-        # Build application args for single-topic stream
         application_args = [
             "--topic", config["topic"],
             "--table", config["table"],
@@ -165,15 +181,11 @@ def create_stream_tasks(stream_key, stream_config, dag):
             "--batch-size", str(config["batch_size"]),
             "--starting-offsets", config["starting_offsets"],
         ]
-        
-        # Static table references
         table_ref = config["table"]
         expire_days_ref = config["expire_days"]
         
     else:
         raise ValueError(f"Unknown stream type: {config['type']}")
-    
-    # Create ingestion task
     ingest_task = SparkSubmitOperator(
         task_id=task_id,
         conn_id="spark_default",
@@ -186,9 +198,7 @@ def create_stream_tasks(stream_key, stream_config, dag):
         verbose=True,
         outlets=[iceberg_dataset(config["table"])],
         dag=dag,
-    )
-    
-    # Create maintenance task  
+    )  
     maintenance_task = PythonOperator(
         task_id=maintenance_task_id,
         python_callable=iceberg_maintenance,
@@ -198,8 +208,6 @@ def create_stream_tasks(stream_key, stream_config, dag):
         },
         dag=dag,
     )
-    
-    # Set up dependency
     ingest_task >> maintenance_task
     
     return ingest_task, maintenance_task
@@ -222,6 +230,5 @@ with DAG(
     params=DEFAULT_PARAMS,
     tags=["streaming", "cdc", "iceberg"],
 ) as dag:
-    # Create all stream tasks using the factory function
     for stream_key, stream_config in BRONZE_STREAMS.items():
         create_stream_tasks(stream_key, stream_config, dag)

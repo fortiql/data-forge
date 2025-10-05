@@ -107,7 +107,7 @@ def create_silver_task(builder: TableBuilder, dag) -> tuple[SparkSubmitOperator,
 
 
 with DAG(
-    dag_id="silver_retail_service",
+    dag_id="silver_retail_star_schema",
     description="Build Kimball-compliant Silver star schema from Bronze retail data",
     doc_md="""\
         #### Silver Retail Service - Kimball Star Schema
@@ -125,7 +125,6 @@ with DAG(
     max_active_tasks=DEFAULT_CONFIG["max_active_tasks"],
     tags=["silver", "iceberg", "retail"],
 ) as dag:
-    # 🧩 Create all Silver table tasks using factory pattern
     build_tasks: Dict[str, SparkSubmitOperator] = {}
     maintenance_tasks: Dict[str, object] = {}
 
@@ -133,17 +132,12 @@ with DAG(
         build_task, maintenance_task = create_silver_task(builder, dag)
         build_tasks[builder.identifier] = build_task
         maintenance_tasks[builder.identifier] = maintenance_task
-
-    # 🔗 Fact Dependencies: dimensions must complete before facts
-    # Note: dim_date has no dependencies and builds first
-    # Facts requiring temporal joins need dim_date for date_sk lookups
     fact_dependencies = {
         "fact_order_service": ["dim_date", "dim_customer_profile", "dim_product_catalog"],
         "fact_inventory_position": ["dim_product_catalog", "dim_warehouse"],
         "fact_customer_engagement": ["dim_date", "dim_customer_profile", "dim_product_catalog"],
     }
 
-    # Wire up all dependencies
     for fact_identifier, deps in fact_dependencies.items():
         if fact_identifier not in build_tasks:
             continue

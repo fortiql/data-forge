@@ -53,53 +53,68 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
     )
 
     # Lookup dimension keys
-    customers = spark.table("iceberg.silver.dim_customer_profile").select(
-        "customer_sk", "user_id", "valid_from", "valid_to"
+    customers = (spark.table("iceberg.silver.dim_customer_profile")
+        .select("customer_sk", "user_id", "valid_from", "valid_to")
+        .alias("cust")
     )
-    
+
     products = (spark.table("iceberg.silver.dim_product_catalog")
-        .where(F.col("is_current"))
-        .select("product_sk", "product_id")
+        .select("product_sk", "product_id", "valid_from", "valid_to")
+        .alias("prod")
     )
 
-    # Lookup date dimension
-    dates = spark.table("iceberg.silver.dim_date").select("date_sk", "date_key")
-    
-    # Join with dimensions using SCD2 temporal join for customers
+    dates = (spark.table("iceberg.silver.dim_date")
+        .select("date_sk", "date_key")
+        .alias("d")
+    )
+
+    aggregated = aggregated.alias("agg")
+
     enriched_fact = (aggregated
-        .join(customers, 
-            (aggregated.user_id == customers.user_id) & 
-            (aggregated.last_interaction_ts >= customers.valid_from) & 
-            (aggregated.last_interaction_ts < customers.valid_to), "left")
-        .join(products, aggregated.product_id == products.product_id, "left")
-        .join(dates, aggregated.event_date == dates.date_key, "left")
+        .join(
+            customers,
+            (F.col("agg.user_id") == F.col("cust.user_id"))
+            & (F.col("agg.last_interaction_ts") >= F.col("cust.valid_from"))
+            & (F.col("agg.last_interaction_ts") < F.col("cust.valid_to")),
+            "left",
+        )
+        .join(
+            products,
+            (F.col("agg.product_id") == F.col("prod.product_id"))
+            & (F.col("agg.last_interaction_ts") >= F.col("prod.valid_from"))
+            & (F.col("agg.last_interaction_ts") < F.col("prod.valid_to")),
+            "left",
+        )
+        .join(dates, F.col("agg.event_date") == F.col("d.date_key"), "left")
         .withColumn("processed_at", F.current_timestamp())
-        .drop(customers.user_id, products.product_id, dates.date_key)  # Remove duplicate columns
-        .distinct()  # Ensure no duplicates from joins
     )
 
-    # Generate unique fact surrogate key using business keys plus context
     return (enriched_fact
-        .filter(F.col("user_id").isNotNull() & F.col("product_id").isNotNull())  # Filter nulls
-        .withColumn("engagement_sk", surrogate_key(
-            F.col("user_id"), 
-            F.col("product_id"), 
-            F.col("event_date"),
-            F.col("latest_bronze_offset")  # Add offset for uniqueness
-        ))
+        .filter(
+            F.col("agg.user_id").isNotNull() & F.col("agg.product_id").isNotNull()
+        )
+        .withColumn(
+            "engagement_sk",
+            surrogate_key(
+                F.col("agg.user_id"),
+                F.col("agg.product_id"),
+                F.col("agg.event_date"),
+                F.col("agg.latest_bronze_offset"),
+            ),
+        )
         .select(
-            "engagement_sk",      # Fact surrogate key
-            "date_sk",            # Date dimension FK
-            "customer_sk",        # Customer dimension FK
-            "product_sk",         # Product dimension FK  
-            "interactions",       # Additive measures
-            "cart_adds",
-            "cart_removes", 
-            "reviews",
-            "total_duration_ms",
-            "last_interaction_ts", # Semi-additive measure
-            "latest_bronze_partition",  # Audit fields (standardized naming)
-            "latest_bronze_offset",
+            "engagement_sk",
+            F.col("d.date_sk").alias("date_sk"),
+            F.col("cust.customer_sk").alias("customer_sk"),
+            F.col("prod.product_sk").alias("product_sk"),
+            F.col("agg.interactions").alias("interactions"),
+            F.col("agg.cart_adds").alias("cart_adds"),
+            F.col("agg.cart_removes").alias("cart_removes"),
+            F.col("agg.reviews").alias("reviews"),
+            F.col("agg.total_duration_ms").alias("total_duration_ms"),
+            F.col("agg.last_interaction_ts").alias("last_interaction_ts"),
+            F.col("agg.latest_bronze_partition").alias("latest_bronze_partition"),
+            F.col("agg.latest_bronze_offset").alias("latest_bronze_offset"),
             "processed_at",
         )
     )
