@@ -44,7 +44,7 @@ Silver is the contract. It makes the semantics explicit, audit trails durable, a
 Kimball’s medallion is not nostalgia. It is a checklist you can run:
 
 1. **Dimensions own surrogate keys.** Each row carries effective dates, `is_current`, and the natural key for traceability.
-2. **Facts respect grain and conformed dimensions.** Dates, customers, products, warehouses—all referenced through surrogate keys.
+2. **Facts respect grain and conformed dimensions.** Dates, customers, products, warehouses--all referenced through surrogate keys.
 3. **Audit fields survive.** Offsets, partitions, and processed timestamps stay in Silver so you can trace every record back to Bronze.
 
 When you run the Silver DAG in Data Forge, you are not running theory. You are practicing the routine of a star schema build under real change data capture pressure.
@@ -109,7 +109,7 @@ Every other dimension follows the same rhythm: products track price and category
 - **SCD2 (slowly changing dimension type 2)** keeps each historical change with `valid_from`/`valid_to` ranges. Customer or product changes never overwrite prior state, so facts resolve to the exact attribute set that was true at the event timestamp.
 - **SCD1** would overwrite the row in place. Order facts from last quarter would suddenly inherit today’s customer segment or product price. That breaks auditing and erodes trust.
 
-Data Forge is a training ground for real-world CDC. We therefore model dimensions with SCD2 exclusively—history is preserved, temporal joins are deterministic, and analysts can slice by past states without guessing.
+Data Forge is a training ground for real-world CDC. We therefore model dimensions with SCD2 exclusively--history is preserved, temporal joins are deterministic, and analysts can slice by past states without guessing.
 
 ---
 
@@ -144,7 +144,7 @@ Silver tables are still Iceberg tables. Each DAG run finishes with `OPTIMIZE`, `
 ## Practise the Routine
 
 1. Start the stack: `docker compose --profile core --profile airflow --profile datagen up -d`.
-2. Let Bronze land events — in Airflow’s UI, unpause the `bronze_events_kafka_stream` DAG and trigger a run. Watch offsets in the Iceberg console or query via Trino.
+2. Let Bronze land events -- in Airflow’s UI, unpause the `bronze_events_kafka_stream` DAG and trigger a run. Watch offsets in the Iceberg console or query via Trino.
 3. Trigger the Silver DAG in Airflow or run the Spark job directly:  
    `python infra/airflow/processing/spark/jobs/silver_retail_service.py --tables all`
 4. Query the results with Trino:  
@@ -181,7 +181,7 @@ Because surrogate keys unify the story, those metrics stay accurate even when up
 
 ---
 
-## Common Failure Modes—and How Silver Stops Them
+## Common Failure Modes--and How Silver Stops Them
 
 - **Natural keys in facts:** Surrogate keys break coupling to volatile IDs.
 - **Latest dimension joins:** Temporal predicates guarantee historical accuracy.
@@ -195,7 +195,7 @@ Silver is not glamorous, but it prevents 2 a.m. incidents.
 ## `_nk` and `_sk`: Traceability by Design
 
 - Columns ending with `_sk` are **surrogate keys**. They are deterministic hashes or sequences generated inside Silver, never exposed to source systems. Facts carry these to ensure joins stay stable even if natural identifiers change or collide.
-- Columns ending with `_nk` are **natural keys**. We retain them as readable anchors—`customer_nk`, `product_nk`—so engineers can trace a surrogate key back to the upstream identifier when debugging or reconciling loads. Keeping `customer_nk` even when a `customer_id` exists in the Bronze payload matters because CDC feeds are messy: deletes arrive as tombstones, IDs can be recycled across tenants, and some producers quietly fix data by reusing identifiers. The `_nk` column captures the authoritative natural key used to derive the surrogate, insulated from payload quirks or renames.
+- Columns ending with `_nk` are **natural keys**. We retain them as readable anchors--`customer_nk`, `product_nk`--so engineers can trace a surrogate key back to the upstream identifier when debugging or reconciling loads. Keeping `customer_nk` even when a `customer_id` exists in the Bronze payload matters because CDC feeds are messy: deletes arrive as tombstones, IDs can be recycled across tenants, and some producers quietly fix data by reusing identifiers. The `_nk` column captures the authoritative natural key used to derive the surrogate, insulated from payload quirks or renames.
 
 Together they give us the best of both worlds: durable joins for analytics and transparent lineage back to the source systems.
 
