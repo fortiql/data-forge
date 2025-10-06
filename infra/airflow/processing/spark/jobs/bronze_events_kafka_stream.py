@@ -14,6 +14,7 @@ from spark_utils import (
         build_spark,
         decode_confluent_avro,
         ensure_iceberg_table,
+        ensure_schema,
         payload_size_expr,
         schema_id_expr,
         warn_if_checkpoint_exists,
@@ -126,6 +127,8 @@ def main() -> None:
 
     spark = build_spark(APP_NAME)
     spark.sparkContext.setLogLevel("INFO")
+    ensure_schema(spark, "iceberg.bronze")
+    
     ensure_iceberg_table(
         spark,
         args.table,

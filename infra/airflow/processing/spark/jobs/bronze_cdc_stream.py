@@ -8,6 +8,7 @@ event into a dedicated Iceberg Bronze table.
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession, functions as F, types as T
@@ -16,6 +17,7 @@ from spark_utils import (
         build_spark,
         decode_confluent_avro,
         ensure_iceberg_table,
+        ensure_schema,
         payload_size_expr,
         schema_id_expr,
         warn_if_checkpoint_exists,
@@ -71,11 +73,15 @@ def build_stream(
         "partition",
         "offset",
     )
-    logger.info("Output schema: %s", ordered.schema.simpleString())
+    schema_fields = [f"{field.name}:{field.dataType.simpleString()}" for field in ordered.schema.fields]
+    logger.info("STREAM_CONFIGURED | topic=%s | fields=[%s]", topic, ", ".join(schema_fields))
     return ordered
 
 
 def write_stream(df: DataFrame, *, table: str, checkpoint: str) -> None:
+    start_time = time.time()
+    logger.info("STREAM_STARTING | table=%s | checkpoint=%s | mode=availableNow", table, checkpoint)
+    
     query = (
         df.writeStream.format("iceberg")
         .option("path", table)
@@ -84,9 +90,19 @@ def write_stream(df: DataFrame, *, table: str, checkpoint: str) -> None:
         .trigger(availableNow=True)
         .start()
     )
-    logger.info("Streaming query started; awaiting termination…")
+    
+    logger.info("STREAM_RUNNING | query_id=%s | status=waiting_for_completion", query.id)
     query.awaitTermination()
-    logger.info("Streaming query finished.")
+    
+    duration = time.time() - start_time
+    progress = query.lastProgress
+    
+    if progress:
+        records_processed = progress.get("inputRowsPerSecond", 0) * duration if progress.get("inputRowsPerSecond") else 0
+        logger.info("STREAM_COMPLETED | table=%s | duration=%.2fs | records_processed=%d | status=success", 
+                   table, duration, int(records_processed))
+    else:
+        logger.info("STREAM_COMPLETED | table=%s | duration=%.2fs | status=success", table, duration)
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,12 +116,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, 
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
     args = parse_args()
 
     app_name = f"{APP_NAME_PREFIX}:{args.table.replace('.', ':')}"
+    logger.info("JOB_STARTING | app=%s | topic=%s | table=%s", app_name, args.topic, args.table)
+    
     spark = build_spark(app_name=app_name)
-    spark.sparkContext.setLogLevel("INFO")
+    spark.sparkContext.setLogLevel("WARN")
+    ensure_schema(spark, "iceberg.bronze")
 
     ensure_iceberg_table(
         spark,
@@ -124,28 +147,34 @@ def main() -> None:
     kafka_bootstrap = spark.conf.get("spark.dataforge.kafka.bootstrap", "kafka:9092")
     schema_registry_url = spark.conf.get("spark.dataforge.schema.registry", "http://schema-registry:8081")
 
-    logger.info(
-        "Starting AvailableNow: topic=%s table=%s checkpoint=%s starting_offsets=%s batch_size=%s",
-        args.topic,
-        args.table,
-        args.checkpoint,
-        args.starting_offsets,
-        args.batch_size,
-    )
+    logger.info("CONFIG_LOADED | topic=%s | table=%s | starting_offsets=%s | batch_size=%d | kafka=%s | schema_registry=%s", 
+               args.topic, args.table, args.starting_offsets, args.batch_size, kafka_bootstrap, schema_registry_url)
 
     if args.starting_offsets == "earliest":
         warn_if_checkpoint_exists(spark, args.checkpoint, logger=logger)
+    
+    logger.info("CHECKPOINT_INFO | location=%s | starting_offsets=%s", args.checkpoint, args.starting_offsets)
 
-    df = build_stream(
-        spark,
-        topic=args.topic,
-        kafka_bootstrap=kafka_bootstrap,
-        schema_registry_url=schema_registry_url,
-        starting_offsets=args.starting_offsets,
-        batch_size=args.batch_size,
-    )
+    try:
+        df = build_stream(
+            spark,
+            topic=args.topic,
+            kafka_bootstrap=kafka_bootstrap,
+            schema_registry_url=schema_registry_url,
+            starting_offsets=args.starting_offsets,
+            batch_size=args.batch_size,
+        )
 
-    write_stream(df, table=args.table, checkpoint=args.checkpoint)
+        write_stream(df, table=args.table, checkpoint=args.checkpoint)
+        logger.info("JOB_SUCCESS | topic=%s | table=%s | status=completed", args.topic, args.table)
+        
+    except Exception as e:
+        logger.error("JOB_FAILED | topic=%s | table=%s | error=%s | status=failed", 
+                    args.topic, args.table, str(e))
+        raise
+    finally:
+        spark.stop()
+        logger.info("JOB_CLEANUP | spark_session=stopped")
 
 
 if __name__ == "__main__":

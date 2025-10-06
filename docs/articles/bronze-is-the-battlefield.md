@@ -437,7 +437,7 @@ Start here: [Data Forge repo](../../README.md)
 
 - This is Part 1 of a series.
 - Part 1.1: [Bronze Needs CDC](cdc-for-bronze.md) — change data capture from Postgres into Kafka and Bronze using Debezium, with schema evolution, delete tombstones, and replay strategy.
-- Part 2: Silver - cleaning, dedupe, shaping raw events
+- Part 2: [Silver Is the Discipline](silver-is-the-discipline.md) — shaping Bronze into a Kimball star schema with SCD2 dimensions, surrogate keys, and Iceberg maintenance baked in. Start by reading the article, then explore [`silver_retail_star_schema_dag.py`](../../infra/airflow/dags/silver_retail_star_schema_dag.py) and `silver_retail_service.py --tables ...` for targeted rebuilds.
 - Part 3: Gold - metrics and models in ClickHouse
 - .. To be continued
 
