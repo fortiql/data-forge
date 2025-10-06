@@ -41,14 +41,14 @@ Silver is the contract. It makes semantics explicit, preserves audit trails, and
 
 ## Kimball Discipline in a Medallion Flow
 
-Dimensional modeling from Kimball meets the modern Bronze/Silver/Gold pattern popularised by the Delta Lake community. Discipline here includes holding the line on naming conventions: surrogate keys (`*_sk`), natural keys (`*_nk`), degenerate dimensions, metrics in facts, attributes in dims. Hybrid patterns absolutely exist—real platforms evolve through negotiated manifests between data teams and the business—but the manifest only stays trustworthy if the notation is consistent. The moment “just add a metric column to the dimension” slips through, you lose the signal of where grain, lineage, and surrogate boundaries live. Call the object whatever you want, but honour the suffixes and the grain they imply.
+Dimensional modeling from Kimball meets the modern Bronze/Silver/Gold pattern popularised by the Delta Lake community. Discipline here includes holding the line on naming conventions: surrogate keys (`*_sk`), natural keys (`*_nk`), degenerate dimensions, metrics in facts, attributes in dims. Hybrid patterns absolutely exist because real platforms evolve through negotiated manifests between data teams and the business, but the manifest only stays trustworthy if the notation is consistent. The moment “just add a metric column to the dimension” slips through, you lose the signal of where grain, lineage, and surrogate boundaries live. Call the object whatever you want, but honour the suffixes and the grain they imply.
 
 Why the insistence?
-- Suffix conventions become guardrails for automated tests, lineage tools, and downstreamSQL that expect surrogate keys in facts and natural keys in dims.
+- Suffix conventions become guardrails for automated tests, lineage tools, and downstream SQL that expect surrogate keys in facts and natural keys in dims.
 - Business glossaries map to the manifest; if a “dimension” starts carrying ad-hoc metrics or opaque IDs, reconciliation with source systems breaks.
-- Snowball exceptions cost more than they save—one shortcut forces custom joins, bespoke loaders, and unplanned rework when you later standardise.
+- Snowball exceptions cost more than they save. One shortcut forces custom joins, bespoke loaders, and unplanned rework when you later standardise.
 
-Most production incidents I have lived through started as “just this once” pressure from the business: a Jira with an ad-hoc SQL slice that bypasses the star schema because a stakeholder needs a metric by morning. Those shortcuts ship fast, but they erode the Silver contract—tables fork, lineage blurs, and the next refresh breaks because nobody wired the temporary column into the builders. You can empathise with the timing pressure and still insist that every change lands through the manifest, with `_sk`/`_nk` consistency and regression checks. The negotiation is real; the discipline is non-negotiable.
+Most production incidents I have lived through started as “just this once” pressure from the business: a Jira with an ad-hoc SQL slice that bypasses the star schema because a stakeholder needs a metric by morning. Those shortcuts ship fast, but they erode the Silver contract. Tables fork, lineage blurs, and the next refresh breaks because nobody wired the temporary column into the builders. You can empathise with the timing pressure and still insist that every change lands through the manifest, with `_sk`/`_nk` consistency and regression checks. The negotiation is real; the discipline is non-negotiable.
 
 You can adopt a hybrid model, but write it down and tag every column accordingly. The notation is the contract.
 
@@ -166,31 +166,8 @@ Run the loop end to end until it feels automatic.
 **Baseline loop**
 1. Start the stack – `docker compose --profile core --profile airflow --profile datagen up -d`.
 2. Feel Bronze – in Airflow, unpause `bronze_events_kafka_stream` and trigger a run. Watch the available-now Spark job pull Kafka offsets while checkpoints advance in MinIO; query `iceberg.bronze.raw_events` in Trino to inspect raw payloads plus provenance.
-3. Enable Silver – unpause `silver_retail_service` Dimensions build first, facts second, as soon as Bronze publishes fresh Iceberg snapshots.
+3. Enable Silver – unpause `silver_retail_service` or run `python infra/airflow/processing/spark/jobs/silver_retail_service.py --tables all`. Dimensions build first, facts second, as soon as Bronze publishes fresh Iceberg snapshots.
 4. Verify outputs – once tasks settle, query `SELECT * FROM iceberg.silver.fact_order_service ORDER BY order_ts DESC LIMIT 20;` and inspect `iceberg.silver.dim_product_catalog` / `iceberg.silver.fact_inventory_position` to check SCD2 ranges and trace facts back to Bronze offsets.
-
-**Variations to drill**
-- Mutate the source – adjust generator parameters (pricing, segments, inventory churn), rerun Silver, and confirm surrogate keys plus `valid_from` windows capture the shift. The generator uses environment variables documented in `infra/data-generator/README.md`:
-  ```bash
-  # .env
-  TARGET_EPS=18
-  P_UPDATE_PRICE=0.005
-  ```
-  Restart the `datagen` profile after updating values.
-- Targeted rebuilds – rebuild only the tables you touched to keep feedback tight:
-  ```bash
-  python infra/airflow/processing/spark/jobs/silver_retail_service.py \
-    --tables dim_customer_profile,fact_order_service
-  ```
-- Failure rehearsal – practise checkpoint recovery on a scratch prefix. Copy the Bronze checkpoint elsewhere before deleting anything, and never wipe the primary path `s3a://checkpoints/spark/iceberg/bronze/raw_events`. After cloning to `.../bronze/raw_events_sandbox`, delete that sandbox path and rerun Bronze with `starting_offsets=earliest` to observe a full rebuild.
-- Observability pass – review Airflow task logs and query Iceberg metadata to map offsets to snapshots:
-  ```sql
-  CALL system.history('iceberg.silver.fact_order_service');
-  ```
-
-Finish each session with the baseline loop plus one variation. Repetition builds muscle memory: source change → Bronze offset → Silver discipline → analyst-ready table.
-
----
 
 ## Metrics the Silver Layer Unlocks
 
@@ -206,7 +183,7 @@ Because surrogate keys unify the story, these metrics stay accurate even when up
 
 ---
 
-## Common Failure Modes—and How Silver Stops Them
+## Common Failure Modes and How Silver Stops Them
 
 - Natural keys in facts → Surrogate keys break coupling to volatile IDs.
 - “Latest” dimension joins → Temporal predicates guarantee historical accuracy.
@@ -248,8 +225,8 @@ Treat the Data Forge implementation as a kata. When scale or SLAs demand more, g
 
 ## Key Concepts: `_nk` and `_sk`
 
-- Columns ending with `_sk` are **surrogate keys**—deterministic hashes or sequences generated in Silver and never exposed upstream. Facts carry them so joins remain stable even if natural identifiers change or collide.
-- Columns ending with `_nk` are **natural keys**—human-readable anchors like `customer_nk` or `product_nk` that trace a surrogate through CDC tombstones, identifier recycling, and quiet upstream fixes.
+- Columns ending with `_sk` are **surrogate keys**. They are deterministic hashes or sequences generated in Silver and never exposed upstream. Facts carry them so joins remain stable even if natural identifiers change or collide.
+- Columns ending with `_nk` are **natural keys**. They are human-readable anchors like `customer_nk` or `product_nk` that trace a surrogate through CDC tombstones, identifier recycling, and quiet upstream fixes.
 
 Keeping both gives analysts durable joins and engineers transparent lineage back to the source systems.
 
