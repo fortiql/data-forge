@@ -127,8 +127,6 @@ def main() -> None:
 
     spark = build_spark(APP_NAME)
     spark.sparkContext.setLogLevel("INFO")
-    
-    # Ensure Bronze schema exists before creating table
     ensure_schema(spark, "iceberg.bronze")
     
     ensure_iceberg_table(

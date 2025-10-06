@@ -42,16 +42,12 @@ def build_dim_product_catalog(spark: SparkSession, _: DataFrame | None) -> DataF
         )
         .filter(F.col("product_id").isNotNull())
     )
-
-    # Apply SCD2 logic to track price and attribute changes
     scd = scd2_from_events(
         products,
         key_cols=["product_id"],
         ordering_cols=["change_ts", "bronze_offset"],
         state_cols=["title", "category", "price_usd"]
     )
-
-    # Add dimension attributes and surrogate key
     return (scd
         .withColumn("valid_from", F.col("change_ts"))
         .withColumn("is_current", F.col("valid_to") == F.lit("2999-12-31 23:59:59").cast("timestamp"))

@@ -11,11 +11,8 @@ from silver.common import parse_cdc_table, scd2_from_events, surrogate_key, unix
 def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> DataFrame:
     users_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_users")
     segments_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_customer_segments")
-
-    # Extract from json_payload column in bronze tables
     users = (users_raw
         .select(
-            # Extract from JSON payload column
             F.coalesce(
                 F.get_json_object("json_payload", "$.after.user_id"),
                 F.get_json_object("json_payload", "$.before.user_id"),
@@ -81,8 +78,6 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
         )
         .filter(F.col("user_id").isNotNull())
     )
-
-    # Add missing columns to segments for union
     segments_extended = segments.select(
         "user_id",
         F.lit(None).cast("string").alias("email"),
@@ -98,8 +93,6 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
     )
 
     combined = users.unionByName(segments_extended, allowMissingColumns=True)
-
-    # Consolidate multiple changes at the same timestamp
     consolidated = (combined
         .groupBy("user_id", "change_ts")
         .agg(
@@ -114,11 +107,9 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
             F.concat_ws(",", F.collect_set("change_source")).alias("change_source"),
         )
     )
-
-    # Forward-fill missing values using window functions with memory optimization
     fill_window = Window.partitionBy("user_id").orderBy("change_ts", "bronze_offset").rowsBetween(Window.unboundedPreceding, Window.currentRow)
     filled = (consolidated
-        .repartition(200, "user_id")  # Repartition for better memory distribution
+        .repartition(200, "user_id")
         .withColumn("email", F.last("email", ignorenulls=True).over(fill_window))
         .withColumn("country", F.last("country", ignorenulls=True).over(fill_window))
         .withColumn("created_at", F.last("created_at", ignorenulls=True).over(fill_window))
@@ -128,7 +119,6 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
         .filter(F.col("valid_from").isNotNull())
     )
 
-    # Apply SCD2 logic
     scd = scd2_from_events(
         filled,
         key_cols=["user_id"],
@@ -136,7 +126,6 @@ def build_dim_customer_profile(spark: SparkSession, _: DataFrame | None) -> Data
         state_cols=["email", "country", "segment", "lifetime_value"],
     )
 
-    # Final dimensional table with surrogate keys
     return (scd
         .withColumn("is_current", F.col("valid_to") == F.lit("2999-12-31 23:59:59").cast("timestamp"))
         .withColumn("processed_at", F.current_timestamp())

@@ -73,8 +73,6 @@ def build_stream(
         "partition",
         "offset",
     )
-    
-    # Log schema in a compact, single-line format for Airflow
     schema_fields = [f"{field.name}:{field.dataType.simpleString()}" for field in ordered.schema.fields]
     logger.info("STREAM_CONFIGURED | topic=%s | fields=[%s]", topic, ", ".join(schema_fields))
     return ordered
@@ -118,7 +116,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    # Configure logging for Airflow-friendly output
     logging.basicConfig(
         level=logging.INFO, 
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -130,9 +127,7 @@ def main() -> None:
     logger.info("JOB_STARTING | app=%s | topic=%s | table=%s", app_name, args.topic, args.table)
     
     spark = build_spark(app_name=app_name)
-    spark.sparkContext.setLogLevel("WARN")  # Reduce Spark verbosity for cleaner Airflow logs
-
-    # Ensure Bronze schema exists before creating table
+    spark.sparkContext.setLogLevel("WARN")
     ensure_schema(spark, "iceberg.bronze")
 
     ensure_iceberg_table(

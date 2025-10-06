@@ -11,7 +11,7 @@ from typing import Iterable, Sequence
 from pyspark.sql import DataFrame, SparkSession, functions as F
 
 from spark_utils import build_spark, ensure_schema
-from silver import BUILDER_MAP, TABLE_BUILDERS, TableBuilder
+from silver import BUILDER_MAP, TableBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +49,13 @@ def materialise_tables(
     
     for builder in builders:
         logger.info("Building %s...", builder.identifier)
-        
-        # Build the dimensional/fact table
         df = builder.build_fn(spark, raw_events)
-        
-        # Cache small dimension tables to improve join performance
         if "dim_" in builder.identifier and builder.identifier != "dim_customer_profile":
             df.cache()
             logger.info("Cached small dimension: %s", builder.identifier)
-        
-        # Enforce primary key constraints
         if builder.primary_key:
             enforce_primary_key(df, builder.primary_key, builder.identifier)
-        
-        # Write to Iceberg
         write_snapshot(df, builder)
-        
-        # Unpersist cached DataFrames to free memory
         if df.is_cached:
             df.unpersist()
             logger.info("Unpersisted cache for: %s", builder.identifier)
@@ -111,19 +101,10 @@ def main() -> None:
     spark = build_spark(app_name=app_name)
     spark.sparkContext.setLogLevel("WARN")
     
-    # Configure Spark for memory efficiency
-    spark.conf.set("spark.sql.adaptive.enabled", "true")
-    spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
-    spark.conf.set("spark.sql.adaptive.advisoryPartitionSizeInBytes", "128MB")
-    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
-    
     ensure_schema(spark, "iceberg.silver")
 
     try:
-        # Convert selected table identifiers to TableBuilder objects
         selected_builders = [BUILDER_MAP[identifier] for identifier in selected]
-        
-        # Determine if any builder requires raw_events
         requires_events = any(builder.requires_raw_events for builder in selected_builders)
         raw_events = spark.table("iceberg.bronze.raw_events") if requires_events else None
         

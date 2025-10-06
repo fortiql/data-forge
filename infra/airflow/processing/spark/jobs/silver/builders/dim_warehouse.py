@@ -9,7 +9,6 @@ from silver.common import parse_cdc_table, scd2_from_events, surrogate_key, unix
 
 
 def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
-    # Parse warehouse metadata
     warehouses_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouses")
     warehouses = (warehouses_raw
         .select(
@@ -42,8 +41,6 @@ def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
         )
         .filter(F.col("warehouse_id").isNotNull())
     )
-
-    # Parse warehouse inventory changes
     warehouse_inv_raw = parse_cdc_table(spark, "iceberg.bronze.demo_public_warehouse_inventory")
     warehouse_inv = (warehouse_inv_raw
         .select(
@@ -71,8 +68,6 @@ def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
         )
         .filter(F.col("warehouse_id").isNotNull())
     )
-
-    # Aggregate inventory metrics per warehouse
     warehouse_stats = (warehouse_inv
         .groupBy("warehouse_id", "change_ts")
         .agg(
@@ -85,8 +80,6 @@ def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
             F.when(F.col("total_reserved") == 0, F.lit(None))
              .otherwise(F.col("total_qty") / F.col("total_reserved")))
     )
-
-    # Get latest warehouse metadata per warehouse
     latest_metadata = (warehouses
         .withColumn("rn", F.row_number().over(
             Window.partitionBy("warehouse_id").orderBy(F.desc("change_ts"))))
@@ -94,19 +87,13 @@ def build_dim_warehouse(spark: SparkSession, _: DataFrame | None) -> DataFrame:
         .drop("rn")
         .select("warehouse_id", "name", "region", "country")
     )
-    
-    # Combine inventory stats with warehouse metadata
     combined = warehouse_stats.join(latest_metadata, "warehouse_id", "left")
-
-    # Apply SCD2 logic to track warehouse capacity changes
     scd = scd2_from_events(
         combined,
         key_cols=["warehouse_id"],
         ordering_cols=["change_ts", "bronze_offset"],
         state_cols=["name", "region", "country", "total_qty", "total_reserved", "inventory_turnover"]
     )
-
-    # Add dimension attributes and surrogate key
     return (scd
         .withColumn("valid_from", F.col("change_ts"))
         .withColumn("is_current", F.col("valid_to") == F.lit("2999-12-31 23:59:59").cast("timestamp"))

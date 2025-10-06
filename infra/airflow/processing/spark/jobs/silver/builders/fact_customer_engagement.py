@@ -10,8 +10,6 @@ from silver.common import parse_bronze_topic, surrogate_key
 def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | None) -> DataFrame:
     if raw_events is None:
         raise ValueError("raw_events dataframe is required for fact_customer_engagement")
-
-    # Extract interaction events from json_payload
     interactions = (parse_bronze_topic(raw_events, "customer-interactions.v1")
         .select(
             F.get_json_object("json_payload", "$.interaction_id").alias("interaction_id"),
@@ -31,10 +29,8 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         )
         .withColumn("event_date", F.to_date("interaction_ts"))
     )
-
-    # Aggregate interactions by user, product, and date with memory optimization
     aggregated = (interactions
-        .repartition(400, "user_id", "product_id")  # Increase partitions for better parallelism
+        .repartition(400, "user_id", "product_id")
         .groupBy("user_id", "product_id", "event_date")
         .agg(
             F.countDistinct("interaction_id").alias("interactions"),
@@ -49,10 +45,8 @@ def build_fact_customer_engagement(spark: SparkSession, raw_events: DataFrame | 
         .withColumn("latest_bronze_offset", F.col("latest_context.bronze_offset"))
         .withColumn("latest_event_time", F.col("latest_context.event_time"))
         .drop("latest_context")
-        .coalesce(200)  # Reduce partitions after aggregation
+        .coalesce(200)
     )
-
-    # Lookup dimension keys
     customers = (spark.table("iceberg.silver.dim_customer_profile")
         .select("customer_sk", "user_id", "valid_from", "valid_to")
         .alias("cust")

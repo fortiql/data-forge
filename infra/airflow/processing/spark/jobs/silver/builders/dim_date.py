@@ -10,12 +10,8 @@ from silver.common import surrogate_key
 
 def build_dim_date(spark: SparkSession, _: DataFrame | None) -> DataFrame:
     """Build date dimension with standard date attributes."""
-    
-    # Generate date range from 2020 to 2030 (adjust as needed)
     start_date = "2020-01-01"
     end_date = "2030-12-31"
-    
-    # Create sequence of dates
     dates_df = (spark.sql(f"""
         SELECT explode(sequence(
             to_date('{start_date}'), 
@@ -23,8 +19,6 @@ def build_dim_date(spark: SparkSession, _: DataFrame | None) -> DataFrame:
             interval 1 day
         )) as date_key
     """))
-    
-    # Add all standard date dimension attributes
     return (dates_df
         .withColumn("date_sk", surrogate_key(F.col("date_key")))
         .withColumn("year", F.year("date_key"))
@@ -39,7 +33,7 @@ def build_dim_date(spark: SparkSession, _: DataFrame | None) -> DataFrame:
         .withColumn("is_weekend", F.col("day_of_week").isin([1, 7]))  # Sunday=1, Saturday=7
         .withColumn("is_month_start", F.col("day") == 1)
         .withColumn("is_month_end", F.col("date_key") == F.last_day("date_key"))
-        .withColumn("is_quarter_start", F.col("day_of_year").isin([1, 91, 182, 274]))  # Approx quarter starts
+        .withColumn("is_quarter_start", F.col("day_of_year").isin([1, 91, 182, 274]))
         .withColumn("is_year_start", F.col("day_of_year") == 1)
         .withColumn("is_year_end", F.col("day_of_year") == F.dayofyear(F.date_add(F.trunc("date_key", "year"), 364)))
         .withColumn("processed_at", F.current_timestamp())

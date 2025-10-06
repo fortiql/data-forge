@@ -59,8 +59,6 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
         "ts": "shipment_ts"
     }).withColumn("shipment_eta_days", F.col("shipment_eta_days").cast("int")) \
      .withColumn("shipment_ts", F.to_timestamp("shipment_ts"))
-
-    # Join all events together - explicitly select columns to avoid ambiguity
     fact = (orders.alias("o")
         .join(payments.alias("p"), F.col("o.order_id") == F.col("p.order_id"), "left")
         .join(shipments.alias("s"), F.col("o.order_id") == F.col("s.order_id"), "left")
@@ -86,8 +84,6 @@ def build_fact_order_service(spark: SparkSession, raw_events: DataFrame | None) 
         .withColumn("order_ts", F.coalesce("order_ts", "event_time"))
         .withColumn("order_date", F.to_date("order_ts"))
     )
-
-    # Lookup dimension keys
     customers = (spark.table("iceberg.silver.dim_customer_profile")
         .select("customer_sk", "user_id", "valid_from", "valid_to")
         .alias("cust")

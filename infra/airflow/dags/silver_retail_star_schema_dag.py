@@ -1,19 +1,5 @@
-"""Silver Retail Service DAG
-
-Transforms Bronze raw events and CDC data into Kimball-compliant Silver tables.
-Follows Bronze layer patterns: factory functions, proper maintenance, 
-structured logging, and declarative configuration.
-
-This is the technical continuation from Bronze to Silver:
-- Bronze captures raw events with full provenance
-- Silver applies business rules and builds dimensional star schema
-- Kimball-compliant design: surrogate keys, SCD2, conformed dimensions
-- Dependencies ensure dimensions complete before facts consume surrogate keys
-- Date dimension provides temporal context for all time-based analysis
-"""
-
 import os
-from typing import Dict, Sequence
+from typing import Dict
 
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
@@ -32,7 +18,6 @@ from silver import TABLE_BUILDERS, TableBuilder
 
 default_args = {"owner": "DataForge", "depends_on_past": False, "retries": 1}
 
-# ⚙️ Core Configuration
 PACKAGES = spark_packages()
 BASE_CONF = spark_base_conf()
 ENV_VARS = spark_env_vars()
@@ -40,10 +25,8 @@ SPARK_JOB_BASE = spark_job_base()
 SILVER_APPLICATION = os.path.join(SPARK_JOB_BASE, "silver_retail_service.py")
 SPARK_PY_FILES = spark_utils_py_files()
 
-# 🧩 Silver Table Configuration
 SILVER_TABLES = {builder.identifier: builder.table for builder in TABLE_BUILDERS}
 
-# 📊 Bronze Dataset Dependencies
 TRIGGER_DATASETS = [
     iceberg_dataset("iceberg.bronze.raw_events"),
     iceberg_dataset("iceberg.bronze.demo_public_users"),
@@ -54,10 +37,9 @@ TRIGGER_DATASETS = [
     iceberg_dataset("iceberg.bronze.demo_public_warehouse_inventory"),
 ]
 
-# 🔄 Default Configuration
 DEFAULT_CONFIG = {
     "expire_days": "14d",
-    "max_active_tasks": 6,
+    "max_active_tasks": 2,
 }
 
 
@@ -85,11 +67,7 @@ def create_silver_task(builder: TableBuilder, dag) -> tuple[SparkSubmitOperator,
         outlets=[iceberg_dataset(builder.table)],
         dag=dag,
     )
-
-    # Import PythonOperator locally to avoid global import issues
     from airflow.providers.standard.operators.python import PythonOperator
-    
-    # Create maintenance task following bronze patterns
     maintenance_task = PythonOperator(
         task_id=f"iceberg_maintenance_{builder.identifier}",
         python_callable=iceberg_maintenance,
@@ -99,8 +77,6 @@ def create_silver_task(builder: TableBuilder, dag) -> tuple[SparkSubmitOperator,
         },
         dag=dag,
     )
-    
-    # Set up dependency
     build_task >> maintenance_task
     
     return build_task, maintenance_task

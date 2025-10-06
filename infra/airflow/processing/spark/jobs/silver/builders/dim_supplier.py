@@ -42,16 +42,12 @@ def build_dim_supplier(spark: SparkSession, _: DataFrame | None) -> DataFrame:
         )
         .filter(F.col("supplier_id").isNotNull())
     )
-
-    # Apply SCD2 logic to track supplier changes
     scd = scd2_from_events(
         suppliers,
         key_cols=["supplier_id"],
         ordering_cols=["change_ts", "bronze_offset"],
         state_cols=["name", "country", "rating"]
     )
-
-    # Add dimension attributes and surrogate key
     return (scd
         .withColumn("valid_from", F.col("change_ts"))
         .withColumn("is_current", F.col("valid_to") == F.lit("2999-12-31 23:59:59").cast("timestamp"))

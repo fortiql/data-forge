@@ -47,21 +47,15 @@ def scd2_from_events(
 ) -> DataFrame:
     """Derive SCD2 rows by detecting state changes in event streams."""
     order_window = Window.partitionBy(*key_cols).orderBy(*ordering_cols)
-    
-    # Hash state columns to detect changes
     state_hash = F.sha2(
         F.concat_ws("||", *[F.coalesce(F.col(col).cast("string"), F.lit("")) for col in state_cols]),
         256
     )
-    
-    # Find rows where state changed
     deltas = (events
         .withColumn("state_hash", state_hash)
         .withColumn("prev_state", F.lag("state_hash").over(order_window))
         .filter((F.col("prev_state").isNull()) | (F.col("prev_state") != F.col("state_hash")))
     )
-    
-    # Add valid_to timestamp for SCD2
     return (deltas
         .withColumn("valid_to", 
             F.coalesce(
