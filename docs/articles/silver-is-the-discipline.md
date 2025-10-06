@@ -1,5 +1,7 @@
 # Silver Is the Discipline: Where Truth Becomes Usable
 
+> Bronze taught us to survive the battlefield. Silver teaches us to build the weapon.
+
 Bronze taught us to own offsets, schemas, and raw events. Silver demands something harder: discipline. This layer turns uncut facts into reliable signals that analysts, dashboards, and machine learning models can trust.
 
 ---
