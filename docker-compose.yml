@@ -290,12 +290,14 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
       - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
+      - PYSPARK_PYTHON=/opt/python/bin/python
     ports:
       - "8091:8091"
     extra_hosts:
       - "localhost:host-gateway"
     volumes:
       - ./infra/airflow/processing/spark/jobs:/opt/spark/jobs
+      - ./notebooks:/home/jovyan/work
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -328,12 +330,14 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
       - AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT=true
+      - PYSPARK_PYTHON=/opt/python/bin/python
     ports:
       - "8092:8092"
     extra_hosts:
       - "localhost:host-gateway"
     volumes:
       - ./infra/airflow/processing/spark/jobs:/opt/spark/jobs
+      - ./notebooks:/home/jovyan/work
     healthcheck:
       test: ["CMD", "curl", "-f", "http://spark-master:8080"]
       interval: 30s
@@ -599,6 +603,8 @@ services:
       - TRINO_URL=http://trino:8080
       - SUPERSET_URL=http://superset:8088
       - AIRFLOW_URL=http://airflow-apiserver:8080
+      - PYSPARK_PYTHON=/opt/conda/envs/notebook/bin/python
+      - PYSPARK_DRIVER_PYTHON=/opt/conda/envs/notebook/bin/python
     profiles: [explore]
 
 volumes:

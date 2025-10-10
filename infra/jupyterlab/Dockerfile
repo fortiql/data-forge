@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ARG SPARK_VERSION=3.5.6
+ARG PYTHON_VERSION=3.12
 RUN set -eux; \
     curl -fSL --connect-timeout 20 --max-time 900 --retry 5 --retry-connrefused \
     -o /tmp/spark.tgz "https://downloads.apache.org/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz"; \
@@ -16,6 +17,18 @@ RUN set -eux; \
     rm /tmp/spark.tgz
 ENV SPARK_HOME=/opt/spark
 ENV PATH="$SPARK_HOME/bin:$PATH"
+
+SHELL ["bash","-o","pipefail","-c"]
+
+ENV CONDA_ENV_PATH=/opt/conda/envs/notebook
+
+RUN mamba create -y -n notebook python=${PYTHON_VERSION} pip jupyterlab notebook && \
+    mamba clean -afy
+
+ENV PATH="${CONDA_ENV_PATH}/bin:${PATH}"
+ENV CONDA_DEFAULT_ENV=notebook
+ENV PYSPARK_PYTHON="${CONDA_ENV_PATH}/bin/python"
+ENV PYSPARK_DRIVER_PYTHON="${CONDA_ENV_PATH}/bin/python"
 
 USER $NB_UID
 RUN pip install --no-cache-dir \
