@@ -2,7 +2,25 @@ FROM bitnamilegacy/spark:3.5.6
 
 USER 0
 
-RUN pip install --no-cache-dir pyarrow pandas fastavro confluent-kafka[avro]
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    bzip2 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG PYTHON_VERSION=3.12
+ENV MAMBA_ROOT_PREFIX=/opt/micromamba
+
+RUN curl -Ls "https://micro.mamba.pm/api/micromamba/linux-64/latest" | tar -xj -C /tmp && \
+    install -m 0755 /tmp/bin/micromamba /usr/local/bin/micromamba && \
+    rm -rf /tmp/bin
+
+RUN micromamba create -y -p /opt/python python=${PYTHON_VERSION} pip && \
+    micromamba clean -afy
+
+ENV PATH="/opt/python/bin:${PATH}"
+
+RUN /opt/python/bin/pip install --no-cache-dir pyarrow pandas fastavro confluent-kafka[avro]
 
 RUN set -eux; \
     mkdir -p "${SPARK_HOME}/jars"; \
@@ -21,5 +39,7 @@ RUN chown -R 1001:1001 ${SPARK_HOME}/conf
 
 ENV SPARK_JARS_DIR="${SPARK_HOME}/jars"
 ENV PYTHONPATH="/opt/spark/jobs:${PYTHONPATH}"
+ENV PYSPARK_PYTHON="/opt/python/bin/python"
+ENV PYSPARK_DRIVER_PYTHON="/opt/python/bin/python"
 
 USER 1001
