@@ -11,4 +11,3 @@ tmp/
 *.code-workspace
 .DS_Store
 .idea/
-notebooks/booking_inputs
